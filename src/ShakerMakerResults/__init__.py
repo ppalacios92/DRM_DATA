@@ -32,17 +32,13 @@ Typical usage
 >>> compare_node_response([drm, surface, station], node_id='QA')
 """
 
-__version__ = "1.0.0"
-__author__  = "Patricio Palacios B."
-
-from .shakermaker_data import ShakerMakerData, DRMData, SurfaceData
+from .shakermaker_data import ShakerMakerData
 from .station_data     import StationData
 from .newmark          import NewmarkSpectrumAnalyzer
 
 from .plotting import (
     plot_models_response,
     plot_models_gf,
-    plot_models_f_spectrum,
     plot_models_newmark_spectra,
     plot_models_DRM,
     plot_models_tensor_gf,
@@ -60,7 +56,7 @@ from .comparison import (
 __all__ = [
     "ShakerMakerData", "DRMData", "SurfaceData", "StationData",
     "NewmarkSpectrumAnalyzer",
-    "plot_models_response", "plot_models_gf", "plot_models_f_spectrum",
+    "plot_models_response", "plot_models_gf",
     "plot_models_newmark_spectra", "plot_models_DRM", "plot_models_tensor_gf",
     "plot_combined_response", "compare_newmark", "compare_fourier", "plot_arias",
     "compare_node_response", "compare_spectra",

@@ -7,7 +7,6 @@ All functions accept a list of ``ShakerMakerData`` instances (or a mix of
 ``ShakerMakerData`` and ``StationRead`` for the combined helpers) and produce
 matplotlib figures.
 
-Author: Patricio Palacios B.
 """
 
 import numpy as np
@@ -16,58 +15,11 @@ import h5py
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from .newmark import NewmarkSpectrumAnalyzer
+from .utils import _rotate, _is_station, _resolve_node, _get_signals, _get_name
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-_R = np.column_stack([
-    np.array([0, 1, 0]),
-    np.array([1, 0, 0]),
-    np.cross(np.array([0, 1, 0]), np.array([1, 0, 0]))
-])
-
-
-def _rotate(xyz_km):
-    return xyz_km * 1000 @ _R
-
-
-def _is_station(obj):
-    """Return True if obj is a StationRead (not a ShakerMakerData)."""
-    return hasattr(obj, 'z_v') and not hasattr(obj, 'internal')
-
-
-def _resolve_node(node_id, model_index, n_models):
-    """Extract a single node index for a given model from flexible input."""
-    if not isinstance(node_id, list):
-        return node_id
-    if isinstance(node_id[0], list):
-        return node_id[model_index][0]
-    if len(node_id) == n_models:
-        return node_id[model_index]
-    return node_id[0]
-
-
-def _get_data_drm(obj, node_idx, data_type):
-    """Return (Z, E, N) arrays from a ShakerMakerData object."""
-    if node_idx in ('QA', 'qa') or (
-            isinstance(node_idx, int) and node_idx >= len(obj.xyz)):
-        d = obj.get_qa_data(data_type)
-    else:
-        d = obj.get_node_data(node_idx, data_type)
-    return d[2], d[0], d[1]   # Z, E, N
-
-
-def _get_data_station(obj, data_type, filtered=False):
-    """Return (Z, E, N) arrays from a StationRead object."""
-    if data_type in ('accel', 'acceleration'):
-        z, e, n = obj.acceleration_filtered if filtered else obj.acceleration
-    elif data_type in ('vel', 'velocity'):
-        z, e, n = obj.velocity_filtered if filtered else obj.velocity
-    else:
-        z, e, n = obj.displacement_filtered if filtered else obj.displacement
-    return z, e, n
-
 
 def _label(obj, node_idx=None):
     """Short display label for a model object."""
@@ -81,7 +33,14 @@ def _label(obj, node_idx=None):
 # Multi-model comparison helpers
 # ---------------------------------------------------------------------------
 
-def plot_models_response(models, node_id, xlim=None, data_type='vel'):
+def plot_models_response(models,
+                         node_id,
+                         xlim=None,
+                         data_type='vel',
+                         figsize=(10, 8),
+                         factor=1.0,
+                         filtered=False):
+
     """Plot time-history response for multiple ShakerMakerData models.
 
     Parameters
@@ -93,24 +52,29 @@ def plot_models_response(models, node_id, xlim=None, data_type='vel'):
     xlim : list, optional
         Time axis limits ``[tmin, tmax]``.
     data_type : {'vel', 'accel', 'disp'}, default ``'vel'``
+    figsize : tuple, default ``(10, 8)``
+    factor : float, default ``1.0``
+        Scale factor applied to all signals before plotting.
+    filtered : bool, default ``False``
+        Use filtered data for StationData objects.
     """
     n      = len(models)
     ylabel = {'accel': 'Acceleration', 'vel': 'Velocity',
               'disp': 'Displacement'}[data_type]
 
-    fig = plt.figure(figsize=(8, 8))
+    fig = plt.figure(figsize=figsize)
 
     for i, obj in enumerate(models):
         nid  = _resolve_node(node_id, i, n)
         nodes = nid if isinstance(nid, (list, np.ndarray)) else [nid]
         for node_idx in nodes:
-            z, e, nn = _get_data_drm(obj, node_idx, data_type)
+            z, e, nn = _get_signals(obj, node_idx, data_type, filtered)
             lbl = _label(obj, node_idx)
             for k, data in enumerate((z, e, nn), 1):
                 plt.subplot(3, 1, k)
-                plt.plot(obj.time, data, linewidth=1, label=lbl)
+                plt.plot(obj.time, data / factor, linewidth=1, label=lbl)
 
-    for k, comp in enumerate(('Vertical (Z)', 'X', 'Y'), 1):
+    for k, comp in enumerate(('Vertical (Z)', 'East (E)', 'North (N)'), 1):
         ax = plt.subplot(3, 1, k)
         ax.set_title(f'{comp} — {ylabel}', fontweight='bold')
         ax.set_xlabel('Time [s]')
@@ -124,7 +88,12 @@ def plot_models_response(models, node_id, xlim=None, data_type='vel'):
     plt.show()
 
 
-def plot_models_gf(models, node_id, subfault, xlim=None):
+def plot_models_gf(models,
+                   node_id,
+                   subfault,
+                   xlim=None,
+                   figsize=(8, 10)):
+
     """Plot Green's function time series for multiple ShakerMakerData models.
 
     Parameters
@@ -133,11 +102,12 @@ def plot_models_gf(models, node_id, subfault, xlim=None):
     node_id : int or list
     subfault : int or list
     xlim : list, optional
+    figsize : tuple, default ``(8, 10)``
     """
     n       = len(models)
     sub_ids = subfault if isinstance(subfault, (list, np.ndarray)) else [subfault]
 
-    fig = plt.figure(figsize=(8, 10))
+    fig = plt.figure(figsize=figsize)
 
     for i, obj in enumerate(models):
         nid   = _resolve_node(node_id, i, n)
@@ -166,56 +136,17 @@ def plot_models_gf(models, node_id, subfault, xlim=None):
     plt.show()
 
 
-def plot_models_f_spectrum(models, node_id, subfault, xlim=None):
-    """Plot Fourier magnitude spectra for multiple ShakerMakerData models.
 
-    Parameters
-    ----------
-    models : list of ShakerMakerData
-    node_id : int or list
-    subfault : int or list
-    xlim : list, optional
-        Frequency axis limits ``[fmin, fmax]``.
-    """
-    n       = len(models)
-    sub_ids = subfault if isinstance(subfault, (list, np.ndarray)) else [subfault]
+def plot_models_newmark_spectra(models,
+                                node_id=None,
+                                target_pos=None,
+                                xlim=None,
+                                data_type='accel',
+                                figsize=(8, 10),
+                                factor=1.0,
+                                filtered=False,
+                                spectral_type='PSa'):
 
-    fig = plt.figure(figsize=(8, 10))
-
-    for i, obj in enumerate(models):
-        nid   = _resolve_node(node_id, i, n)
-        nodes = nid if isinstance(nid, (list, np.ndarray)) else [nid]
-        for node_idx in nodes:
-            if node_idx in ('QA', 'qa'):
-                continue
-            for sid in sub_ids:
-                try:
-                    mags = [np.sqrt(obj.get_spectrum(node_idx, sid, c, 'real') ** 2 +
-                                    obj.get_spectrum(node_idx, sid, c, 'imag') ** 2)
-                            for c in ('z', 'e', 'n')]
-                    lbl = f'{obj.model_name}_N{node_idx}_S{sid}'
-                    for k, mag in enumerate(mags, 1):
-                        plt.subplot(3, 1, k)
-                        plt.loglog(obj.freqs, mag, linewidth=1, alpha=0.7, label=lbl)
-                except KeyError:
-                    print(f"  ! No spectrum for N{node_idx} S{sid}")
-
-    for k, title in enumerate(('Vertical (Z)', 'East (E)', 'North (N)'), 1):
-        ax = plt.subplot(3, 1, k)
-        ax.set_title(f'{title} — Fourier Spectrum', fontweight='bold')
-        ax.set_xlabel('Frequency [Hz]')
-        ax.set_ylabel('Magnitude (log scale)')
-        ax.grid(True, alpha=0.3)
-        ax.legend()
-        if xlim:
-            ax.set_xlim(xlim)
-
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_models_newmark_spectra(models, node_id=None, target_pos=None,
-                                xlim=None, data_type='accel', figsize=(8, 10)):
     """Plot Newmark response spectra for multiple ShakerMakerData models.
 
     Parameters
@@ -227,6 +158,11 @@ def plot_models_newmark_spectra(models, node_id=None, target_pos=None,
     xlim : list, default ``[0, 5]``
     data_type : {'accel', 'vel', 'disp'}, default ``'accel'``
     figsize : tuple, default ``(8, 10)``
+    factor : float, default ``1.0``
+        Scale factor applied to all signals before computing spectra.
+    filtered : bool, default ``False``
+        Use filtered data for StationData objects.
+    spectral_type : {'PSa', 'Sa', 'PSv', 'Sv', 'Sd'}, default ``'PSa'``
     """
     if xlim is None:
         xlim = [0, 5]
@@ -234,7 +170,8 @@ def plot_models_newmark_spectra(models, node_id=None, target_pos=None,
         raise ValueError("Provide node_id or target_pos.")
 
     n      = len(models)
-    ylabel = 'Sa (g)' if data_type == 'accel' else 'Spectral Response'
+    ylabel = {'PSa': 'PSa (g)', 'Sa': 'Sa (g)', 'PSv': 'PSv (m/s)',
+              'Sv': 'Sv (m/s)', 'Sd': 'Sd (m)'}.get(spectral_type, spectral_type)
     scale  = 1.0 / 9.81 if data_type == 'accel' else 1.0
 
     fig, axes = plt.subplots(3, 1, figsize=figsize)
@@ -246,18 +183,18 @@ def plot_models_newmark_spectra(models, node_id=None, target_pos=None,
         else:
             node_idx = _resolve_node(node_id, i, n)
 
-        z, e, nn = _get_data_drm(obj, node_idx, data_type)
+        z, e, nn = _get_signals(obj, node_idx, data_type, filtered)
         dt  = obj.time[1] - obj.time[0]
         lbl = _label(obj, node_idx)
 
-        specs = [NewmarkSpectrumAnalyzer.compute(sig * scale, dt)
+        specs = [NewmarkSpectrumAnalyzer.compute(sig * scale / factor, dt)
                  for sig in (z, e, nn)]
         T = specs[0]['T']
         for ax, sp in zip(axes, specs):
-            ax.plot(T, sp['PSa'], linewidth=2, label=lbl)
+            ax.plot(T, sp[spectral_type], linewidth=2, label=lbl)
 
-    for ax, comp in zip(axes, ('Vertical (Z)', 'X', 'Y')):
-        ax.set_title(f'{comp} — Newmark Spectrum', fontweight='bold')
+    for ax, comp in zip(axes, ('Vertical (Z)', 'East (E)', 'North (N)')):
+        ax.set_title(f'{comp} — {spectral_type}', fontweight='bold')
         ax.set_xlabel('T (s)', fontsize=12)
         ax.set_ylabel(ylabel, fontsize=12)
         ax.set_xlim(xlim)
@@ -268,9 +205,13 @@ def plot_models_newmark_spectra(models, node_id=None, target_pos=None,
     plt.show()
 
 
-def plot_models_DRM(models, xlim=None, ylim=None, zlim=None,
-                    label_nodes=False, show='all',
-                    show_nodes=True, show_cubes=True):
+def plot_models_DRM(models, 
+                    xlim=None, ylim=None, zlim=None,
+                    label_nodes=False, 
+                    show='all',
+                    show_nodes=True, 
+                    show_cubes=True):
+
     """Plot multiple ShakerMakerData domains in one 3-D figure.
 
     Parameters
@@ -340,7 +281,10 @@ def plot_models_DRM(models, xlim=None, ylim=None, zlim=None,
     plt.show()
 
 
-def plot_models_tensor_gf(models, node_id, subfault, xlim=None):
+def plot_models_tensor_gf(models, 
+                            node_id, 
+                            subfault, 
+                            xlim=None):
     """Plot 9-component tensor Green's functions for multiple models.
 
     Parameters
@@ -407,8 +351,14 @@ def plot_models_tensor_gf(models, node_id, subfault, xlim=None):
 # Mixed DRM + Station helpers
 # ---------------------------------------------------------------------------
 
-def plot_combined_response(models, data_type='vel', drm_node='QA',
-                            factor=1.0, xlim=None, filtered=False):
+def plot_combined_response(models,
+                            data_type='vel',
+                            drm_node='QA',
+                            factor=1.0,
+                            xlim=None,
+                            filtered=False,
+                            figsize=(10, 8)):
+
     """Plot time-history response for a mixed list of ShakerMakerData and StationRead.
 
     Parameters
@@ -423,19 +373,20 @@ def plot_combined_response(models, data_type='vel', drm_node='QA',
     xlim : list, optional
     filtered : bool, default ``False``
         Use filtered data for StationRead objects.
+    figsize : tuple, default ``(10, 8)``
     """
     ylabel = {'accel': 'Acceleration', 'vel': 'Velocity',
               'disp': 'Displacement'}.get(data_type, data_type)
 
-    fig, axes = plt.subplots(3, 1, figsize=(10, 8))
+    fig, axes = plt.subplots(3, 1, figsize=figsize)
 
     for obj in models:
         if _is_station(obj):
-            z, e, n = _get_data_station(obj, data_type, filtered)
+            z, e, n = _get_signals(obj, None, data_type, filtered)
             lbl  = obj.name if obj.name else 'Station'
             time = obj.t
         else:
-            z, e, n = _get_data_drm(obj, drm_node, data_type)
+            z, e, n = _get_signals(obj, drm_node, data_type)
             node_part = '_QA' if drm_node in ('QA', 'qa') else f'_N{drm_node}'
             lbl  = f'{obj.model_name}{node_part}'
             time = obj.time
@@ -456,9 +407,15 @@ def plot_combined_response(models, data_type='vel', drm_node='QA',
     plt.show()
 
 
-def compare_newmark(models, data_type='accel', spectral_type='PSa',
-                    drm_node='QA', factor=1.0, xlim=None,
-                    filtered=False, figsize=(6, 10)):
+def compare_newmark(models, 
+                    data_type='accel', 
+                    spectral_type='PSa',
+                    drm_node='QA', 
+                    factor=1.0, 
+                    xlim=None,
+                    filtered=False, 
+                    figsize=(6, 10)):
+
     """Plot Newmark spectra for a mixed list of ShakerMakerData and StationRead.
 
     Parameters
@@ -481,11 +438,11 @@ def compare_newmark(models, data_type='accel', spectral_type='PSa',
 
     for obj in models:
         if _is_station(obj):
-            z, e, n = _get_data_station(obj, data_type, filtered)
+            z, e, n = _get_signals(obj, None, data_type, filtered)
             lbl = obj.name if obj.name else 'Station'
             dt  = obj.dt
         else:
-            z, e, n = _get_data_drm(obj, drm_node, data_type)
+            z, e, n = _get_signals(obj, drm_node, data_type)
             node_part = '_QA' if drm_node in ('QA', 'qa') else f'_N{drm_node}'
             lbl = f'{obj.model_name}{node_part}'
             dt  = obj.time[1] - obj.time[0]
@@ -509,8 +466,14 @@ def compare_newmark(models, data_type='accel', spectral_type='PSa',
     plt.show()
 
 
-def compare_fourier(models, data_type='accel', drm_node='QA',
-                    xlim=None, filtered=False, factor=1.0, figsize=(8, 10)):
+def compare_fourier(models, 
+                    data_type='accel', 
+                    drm_node='QA',
+                    xlim=None, 
+                    filtered=False, 
+                    factor=1.0, 
+                    figsize=(8, 10)):
+
     """Plot Fourier spectra for a mixed list of ShakerMakerData and StationRead.
 
     Parameters
@@ -533,7 +496,7 @@ def compare_fourier(models, data_type='accel', drm_node='QA',
                 dtype_map[data_type], filtered=filtered)
             lbl = obj.name if obj.name else 'Station'
         else:
-            z, e, n = _get_data_drm(obj, drm_node, data_type)
+            z, e, n = _get_signals(obj, drm_node, data_type)
             dt    = obj.time[1] - obj.time[0]
             freqs = np.fft.rfftfreq(len(obj.time), dt)
             z_amp = np.abs(np.fft.rfft(z)) * dt
@@ -560,8 +523,12 @@ def compare_fourier(models, data_type='accel', drm_node='QA',
     plt.show()
 
 
-def plot_arias(models, data_type='accel', drm_node='QA',
-               xlim=None, figsize=(8, 10)):
+def plot_arias(models, 
+                data_type='accel', 
+                drm_node='QA',
+                xlim=None, 
+                figsize=(8, 10)):
+
     """Plot Arias intensity curves for a mixed list of models.
 
     Requires ``AriasIntensityAnalyzer`` from ``EarthquakeSignal``.
@@ -585,7 +552,7 @@ def plot_arias(models, data_type='accel', drm_node='QA',
             time = obj.t
             lbl  = obj.name if obj.name else 'Station'
         else:
-            z, e, n = _get_data_drm(obj, drm_node, 'accel')
+            z, e, n = _get_signals(obj, drm_node, 'accel')
             dt   = obj.time[1] - obj.time[0]
             time = obj.time
             node_part = '_QA' if drm_node in ('QA', 'qa') else f'_N{drm_node}'

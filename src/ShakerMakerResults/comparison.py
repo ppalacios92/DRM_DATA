@@ -7,57 +7,15 @@ Functions compute standard signal-similarity metrics (GoF, Peak Error,
 Pearson correlation, RMSE) and spectral metrics, printing a structured
 summary to stdout.
 
-Author: Patricio Palacios B.
 """
 
 import numpy as np
 from .newmark import NewmarkSpectrumAnalyzer
+from .utils import _is_station, _resolve_node, _get_signals, _get_time, _get_name
 
 # ---------------------------------------------------------------------------
 # Internal helpers  (shared by both comparison functions)
 # ---------------------------------------------------------------------------
-
-def _is_station(obj):
-    return hasattr(obj, 'z_v') and not hasattr(obj, 'internal')
-
-
-def _resolve_node(node_id, model_index, n_models):
-    if not isinstance(node_id, list):
-        return node_id
-    if isinstance(node_id[0], list):
-        return node_id[model_index][0]
-    if len(node_id) == n_models:
-        return node_id[model_index]
-    return node_id[0]
-
-
-def _get_signals(obj, node_idx, data_type, filtered=False):
-    """Return [Z, E, N] arrays from ShakerMakerData or StationRead."""
-    if _is_station(obj):
-        if data_type in ('accel', 'acceleration'):
-            z, e, n = obj.acceleration_filtered if filtered else obj.acceleration
-        elif data_type in ('vel', 'velocity'):
-            z, e, n = obj.velocity_filtered if filtered else obj.velocity
-        else:
-            z, e, n = obj.displacement_filtered if filtered else obj.displacement
-        return [z, e, n]
-
-    if node_idx in ('QA', 'qa') or (
-            isinstance(node_idx, int) and node_idx >= len(obj.xyz)):
-        d = obj.get_qa_data(data_type)
-    else:
-        d = obj.get_node_data(node_idx, data_type)
-    return [d[2], d[0], d[1]]   # Z, E, N
-
-
-def _get_time(obj):
-    return obj.t if _is_station(obj) else obj.time
-
-
-def _get_name(obj):
-    if _is_station(obj):
-        return obj.name if obj.name else "Station"
-    return obj.model_name
 
 
 def _metrics(sig_ref, sig_test):

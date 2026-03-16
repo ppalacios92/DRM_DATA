@@ -3,13 +3,7 @@ Description:
     This module defines the NewmarkSpectrumAnalyzer class, which implements the linear acceleration
     method (β-Newmark) to compute the response spectrum of a single-degree-of-freedom (SDOF) system
     subject to a ground acceleration record. The output includes spectral quantities and time histories.
-
-Date:
-    2025-06-10
 """
-
-__author__ = "Ing. Patricio Palacios B., M.Sc."
-__version__ = "1.1.0"
 
 import numpy as np
 # from scipy.integrate import cumtrapz

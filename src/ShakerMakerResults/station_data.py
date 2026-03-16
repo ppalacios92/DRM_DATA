@@ -412,9 +412,9 @@ class StationData:
     def _label(self):
         return self.name if self.name else "Station"
 
-    def _plot_3comp(self, z, e, n, ylabel, title, xlim):
+    def _plot_3comp(self, z, e, n, ylabel, title, xlim, figsize=(10, 8)):
         lbl = self._label()
-        fig, axes = plt.subplots(3, 1, figsize=(10, 6))
+        fig, axes = plt.subplots(3, 1, figsize=figsize)
         for ax, data, comp in zip(axes, (z, e, n), ('Z', 'E', 'N')):
             ax.plot(self.t, data, label=f"{comp} ({lbl})")
             ax.set_ylabel(f"{ylabel}$_{comp.lower()}$")
@@ -427,46 +427,46 @@ class StationData:
         plt.tight_layout()
         plt.show()
 
-    def plot_velocity(self, xlim=None, factor=1.0):
+    def plot_velocity(self, xlim=None, factor=1.0, figsize=(10, 8)):
         """Plot raw velocity time series."""
         z, e, n = self.velocity
         self._plot_3comp(z/factor, e/factor, n/factor,
-                         r"$\dot{u}$", "Velocity", xlim)
+                         r"$\dot{u}$", "Velocity", xlim, figsize)
 
-    def plot_acceleration(self, xlim=None, factor=9.81):
+    def plot_acceleration(self, xlim=None, factor=9.81, figsize=(10, 8)):
         """Plot acceleration time series."""
         z, e, n = self.acceleration
         ylabel = r"$\ddot{u}$ (g)" if factor == 9.81 else r"$\ddot{u}$"
-        self._plot_3comp(z/factor, e/factor, n/factor, ylabel, "Acceleration", xlim)
+        self._plot_3comp(z/factor, e/factor, n/factor, ylabel, "Acceleration", xlim, figsize)
 
-    def plot_displacement(self, xlim=None, factor=1.0):
+    def plot_displacement(self, xlim=None, factor=1.0, figsize=(10, 8)):
         """Plot displacement time series."""
         z, e, n = self.displacement
         self._plot_3comp(z/factor, e/factor, n/factor,
-                         r"$u$", "Displacement", xlim)
+                         r"$u$", "Displacement", xlim, figsize)
 
-    def plot_velocity_filtered(self, xlim=None, factor=1.0):
+    def plot_velocity_filtered(self, xlim=None, factor=1.0, figsize=(10, 8)):
         """Plot filtered velocity time series."""
         z, e, n = self.velocity_filtered
         self._plot_3comp(z/factor, e/factor, n/factor,
-                         r"$\dot{u}$", "Velocity (Filtered)", xlim)
+                         r"$\dot{u}$", "Velocity (Filtered)", xlim, figsize)
 
-    def plot_acceleration_filtered(self, xlim=None, factor=9.81):
+    def plot_acceleration_filtered(self, xlim=None, factor=9.81, figsize=(10, 8)):
         """Plot filtered acceleration time series."""
         z, e, n = self.acceleration_filtered
         ylabel = r"$\ddot{u}$ (g)" if factor == 9.81 else r"$\ddot{u}$"
         self._plot_3comp(z/factor, e/factor, n/factor,
-                         ylabel, "Acceleration (Filtered)", xlim)
+                         ylabel, "Acceleration (Filtered)", xlim, figsize)
 
-    def plot_displacement_filtered(self, xlim=None, factor=1.0):
+    def plot_displacement_filtered(self, xlim=None, factor=1.0, figsize=(10, 8)):
         """Plot filtered displacement time series."""
         z, e, n = self.displacement_filtered
         self._plot_3comp(z/factor, e/factor, n/factor,
-                         r"$u$", "Displacement (Filtered)", xlim)
+                         r"$u$", "Displacement (Filtered)", xlim, figsize)
 
-    def _plot_fourier_internal(self, freqs, z_amp, e_amp, n_amp, title, xlim):
+    def _plot_fourier_internal(self, freqs, z_amp, e_amp, n_amp, title, xlim, figsize=(12, 4)):
         lbl = self._label()
-        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+        fig, axes = plt.subplots(1, 3, figsize=figsize)
         for ax, amp, comp in zip(axes, (z_amp, e_amp, n_amp), ('Z', 'E', 'N')):
             ax.plot(freqs, amp, label=lbl)
             ax.set_xlabel('Frequency (Hz)')
@@ -481,22 +481,22 @@ class StationData:
         plt.tight_layout()
         plt.show()
 
-    def plot_fourier(self, component='acceleration', xlim=None, factor=9.81):
+    def plot_fourier(self, component='acceleration', xlim=None, factor=9.81, figsize=(12, 4)):
         """Plot Fourier amplitude spectrum."""
         freqs, z_amp, e_amp, n_amp = self.get_fourier(component, filtered=False)
         self._plot_fourier_internal(
             freqs, z_amp/factor, e_amp/factor, n_amp/factor,
-            f"Fourier — {component.capitalize()}", xlim)
+            f"Fourier — {component.capitalize()}", xlim, figsize)
 
-    def plot_fourier_filtered(self, component='acceleration', xlim=None, factor=9.81):
+    def plot_fourier_filtered(self, component='acceleration', xlim=None, factor=9.81, figsize=(12, 4)):
         """Plot Fourier amplitude spectrum of filtered data."""
         freqs, z_amp, e_amp, n_amp = self.get_fourier(component, filtered=True)
         self._plot_fourier_internal(
             freqs, z_amp/factor, e_amp/factor, n_amp/factor,
-            f"Fourier — {component.capitalize()} (Filtered)", xlim)
+            f"Fourier — {component.capitalize()} (Filtered)", xlim, figsize)
 
     def plot_fourier_comparison(self, component='acceleration',
-                                xlim=None, factor=9.81):
+                                xlim=None, factor=9.81, figsize=(12, 4)):
         """Plot original vs filtered Fourier side by side.
 
         Raises
@@ -511,7 +511,7 @@ class StationData:
         freqs_f, z_af, e_af, n_af = self.get_fourier(component, filtered=True)
         lbl = self._label()
 
-        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+        fig, axes = plt.subplots(1, 3, figsize=figsize)
         for ax, amp, ampf, comp in zip(
                 axes, (z_a, e_a, n_a), (z_af, e_af, n_af), ('Z', 'E', 'N')):
             ax.plot(freqs,   amp  / factor, '--', label=f'{lbl} Original')
@@ -530,27 +530,37 @@ class StationData:
         plt.tight_layout()
         plt.show()
 
-    def plot_newmark(self, xlim=None, filtered=False):
-        """Plot Newmark PSa response spectra.
+    def plot_newmark(self, xlim=None, filtered=False, figsize=(12, 4),
+                     factor=1.0, spectral_type='PSa'):
+        """Plot Newmark response spectra.
 
         Parameters
         ----------
         xlim : list, optional
         filtered : bool, default ``False``
+        figsize : tuple, default ``(12, 4)``
+        factor : float, default ``1.0``
+            Scale factor applied to the spectrum values before plotting.
+        spectral_type : {'PSa', 'Sa', 'PSv', 'Sv', 'Sd'}, default ``'PSa'``
         """
         spec  = self.get_newmark(filtered)
         lbl   = self._label()
         title = "Newmark Spectrum (Filtered)" if filtered else "Newmark Spectrum"
+        ylabel = {'PSa': 'PSa (g)', 'Sa': 'Sa (g)', 'PSv': 'PSv (m/s)',
+                  'Sv': 'Sv (m/s)', 'Sd': 'Sd (m)'}.get(spectral_type, spectral_type)
 
-        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-        for ax, psa, comp in zip(
-                axes,
-                (spec['PSa_z'], spec['PSa_e'], spec['PSa_n']),
-                ('Z', 'E', 'N')):
-            ax.plot(spec['T'], psa, label=lbl, linewidth=2)
+        # Map spectral_type to the correct key in the spectrum dict
+        key_map = {'PSa': ('PSa_z', 'PSa_e', 'PSa_n'),
+                   'Sa':  ('PSa_z', 'PSa_e', 'PSa_n')}
+        keys = key_map.get(spectral_type, ('PSa_z', 'PSa_e', 'PSa_n'))
+
+        fig, axes = plt.subplots(1, 3, figsize=figsize)
+        for ax, psa, comp in zip(axes, (spec[keys[0]], spec[keys[1]], spec[keys[2]]),
+                                  ('Z', 'E', 'N')):
+            ax.plot(spec['T'], psa / factor, label=lbl, linewidth=2)
             ax.set_xlabel('T (s)')
-            ax.set_ylabel('Sa (g)')
-            ax.set_title(f'{comp} Component')
+            ax.set_ylabel(ylabel)
+            ax.set_title(f'{comp} — {spectral_type}')
             ax.legend()
             ax.grid(True)
             if xlim:
