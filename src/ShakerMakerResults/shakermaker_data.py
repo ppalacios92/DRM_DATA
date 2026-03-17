@@ -313,6 +313,11 @@ class ShakerMakerData:
         if not self._gf_loaded:
             raise RuntimeError(
                 "GFs not loaded. Call load_gf_database('file.h5') first.")
+        
+        # Convertir 'QA' al índice real
+        if node_id in ('QA', 'qa'):
+            node_id = self._n_nodes  # QA está en índice nstations
+        
         if self._use_pair_to_slot:
             if subfault_id >= self._nsources_db:
                 raise ValueError(
@@ -321,12 +326,16 @@ class ShakerMakerData:
             flat = node_id * self._nsources_db + subfault_id
             return int(self._pair_to_slot[flat])
         else:
-            zrec  = float(self.xyz[node_id][2])
-            zsrc  = float(self._zsrc_slots[subfault_id % len(self._zsrc_slots)])
-            dh    = float(self._dh_slots[subfault_id  % len(self._dh_slots)])
-            q     = np.array([[dh   / self._delta_h,
-                                zsrc / self._delta_v_src,
-                                zrec / self._delta_v_rec]])
+            # KDTree fallback - para QA usar xyz_qa
+            if node_id == self._n_nodes and self.xyz_qa is not None:
+                zrec = float(self.xyz_qa[0][2])
+            else:
+                zrec = float(self.xyz[node_id][2])
+            zsrc = float(self._zsrc_slots[subfault_id % len(self._zsrc_slots)])
+            dh   = float(self._dh_slots[subfault_id % len(self._dh_slots)])
+            q    = np.array([[dh   / self._delta_h,
+                              zsrc / self._delta_v_src,
+                              zrec / self._delta_v_rec]])
             _, si = self._ktree.query(q)
             return int(si[0])
     
@@ -360,8 +369,12 @@ class ShakerMakerData:
                     rs[i] = interp1d(self._resample_cache['time_orig'], data[i],
                                      kind='linear', fill_value='extrapolate')(self.time)
                 data = rs
+            # data[0]=e, data[1]=n, data[2]=z → reordenar a [z, e, n]
+            data = data[[2, 0, 1], :]
             self._node_cache[key] = data
         return self._node_cache[key]
+
+
 
     def get_qa_data(self, data_type='accel'):
         """Return signal array (3, Nt) for the QA station (DRM only)."""
@@ -382,31 +395,31 @@ class ShakerMakerData:
                     rs[i] = interp1d(self._resample_cache['time_orig'], data[i],
                                      kind='linear', fill_value='extrapolate')(self.time)
                 data = rs
+            data = data[[2, 0, 1], :]
             self._node_cache[key] = data
         return self._node_cache[key]
 
 
     def get_gf(self, node_id, subfault_id, component='z'):
-        """Return Green's function time series for a node/subfault pair.
-
-        Supports both OP pipeline (tdata_dict/{slot}_tdata) and legacy
-        (GF/sta_N/sub_M/{z,e,n}) formats, detected automatically.
-
-        Parameters
-        ----------
-        node_id : int
-        subfault_id : int
-        component : {'z','e','n','tdata'}, default 'z'
-        """
-        key = (node_id, subfault_id, component)
+        """Return Green's function time series for a node/subfault pair."""
+        
+        # Normalizar node_id para QA
+        node_id_key = node_id
+        if node_id in ('QA', 'qa'):
+            node_id_key = 'QA'
+            node_id_num = self._n_nodes
+        else:
+            node_id_num = node_id
+        
+        key = (node_id_key, subfault_id, component)
         if key not in self._gf_cache:
 
-            #  OP pipeline 
+            # OP pipeline
             if self._gf_loaded:
-                slot = self._get_slot(node_id, subfault_id)
+                slot = self._get_slot(node_id_num, subfault_id)
                 donor_n, donor_s = self._pairs_to_compute[slot]
-                if donor_n != node_id:
-                    print(f"  Node {node_id}/sub {subfault_id} → "
+                if donor_n != node_id_num:
+                    print(f"  Node {node_id_key}/sub {subfault_id} → "
                           f"slot {slot} (donor: {donor_n})")
                 with h5py.File(self._gf_h5_path, 'r') as f:
                     tdata_path = f'tdata_dict/{slot}_tdata'
@@ -421,35 +434,36 @@ class ShakerMakerData:
                         if comp_path in f:
                             self._gf_cache[key] = f[comp_path][:]
                         else:
-                            # Fallback: extract column from tdata
                             comp_map = {'z': 0, 'e': 1, 'n': 2}
                             self._gf_cache[key] = f[tdata_path][:, comp_map[component]]
                     else:
                         raise KeyError(f"Unknown component '{component}'.")
 
-            #  Legacy Node_Mapping 
+            # Legacy Node_Mapping
             elif self.node_mapping is not None:
-                mask  = ((self.node_mapping[:,0]==node_id) &
-                         (self.node_mapping[:,1]==subfault_id))
-                idx   = np.where(mask)[0]
+                if node_id_key == 'QA':
+                    raise KeyError("QA GFs not available in legacy format.")
+                mask = ((self.node_mapping[:, 0] == node_id_num) &
+                        (self.node_mapping[:, 1] == subfault_id))
+                idx = np.where(mask)[0]
                 if not len(idx):
-                    raise KeyError(f"Node {node_id}, subfault {subfault_id} "
+                    raise KeyError(f"Node {node_id_num}, subfault {subfault_id} "
                                    "not in mapping")
                 ipair = self.node_mapping[idx[0], 2]
                 src_n, src_s = self.pairs_mapping[ipair]
-                if src_n != node_id:
-                    print(f"  Node {node_id}/sub {subfault_id} → donor {src_n}")
+                if src_n != node_id_num:
+                    print(f"  Node {node_id_num}/sub {subfault_id} → donor {src_n}")
                 path = f'GF/sta_{src_n}/sub_{src_s}/{component}'
                 with h5py.File(self.filename, 'r') as f:
                     if path not in f:
                         raise KeyError(f"GF not found: {path}")
                     self._gf_cache[key] = f[path][:]
-
             else:
                 raise RuntimeError(
                     "No GF data available. Call load_gf_database() first.")
 
         return self._gf_cache[key]
+
 
 
     def get_surface_snapshot(self, time_idx, component='z', data_type='vel'):
@@ -589,18 +603,100 @@ class ShakerMakerData:
                 if i in comp_donors:
                     ax.text(x,y,z,str(i),fontsize=8,color=col)
 
-    def _collect_node_ids(self, node_id, target_pos):
+    # def _collect_node_ids(self, node_id, target_pos):
+    #     if node_id is not None:
+    #         if isinstance(node_id, (list, np.ndarray)):
+    #             return node_id
+    #         # Manejar 'QA' como caso especial
+    #         if node_id in ('QA', 'qa'):
+    #             return ['QA']
+    #         return [node_id]
+    #     if target_pos is not None:
+    #         dist = np.linalg.norm(self.xyz_all - np.asarray(target_pos), axis=1)
+    #         idx = int(np.argmin(dist))
+    #         print(f"Nearest node: {idx}  distance={dist[idx]:.6f} km")
+    #         return [idx]
+    #     raise ValueError("Provide node_id or target_pos.")
+
+    def _collect_node_ids(self, node_id=None, target_pos=None, print_info=True):
+        """Resolve node IDs from node_id or target_pos and optionally print info.
+        
+        Parameters
+        ----------
+        node_id : int, str, list, or None
+        target_pos : array-like (3,) or None
+        print_info : bool, default True
+            Print node info (position, QA match, etc.)
+        
+        Returns
+        -------
+        list of int or 'QA'
+            Resolved node IDs
+        """
+        nids = []
+        
         if node_id is not None:
-            return node_id if isinstance(node_id,(list,np.ndarray)) else [node_id]
-        if target_pos is not None:
-            dist = np.linalg.norm(self.xyz_all - np.asarray(target_pos), axis=1)
-            idx  = int(np.argmin(dist))
-            print(f"Nearest node: {idx}  distance={dist[idx]:.6f} km")
-            return [idx]
-        raise ValueError("Provide node_id or target_pos.")
+            if isinstance(node_id, (list, np.ndarray)):
+                nids = list(node_id)
+            elif node_id in ('QA', 'qa'):
+                nids = ['QA']
+            else:
+                nids = [node_id]
+        elif target_pos is not None:
+            target = np.asarray(target_pos)
+            dist = np.linalg.norm(self.xyz_all - target, axis=1)
+            idx = int(np.argmin(dist))
+            # Verificar si es el QA
+            if self.xyz_qa is not None and idx == len(self.xyz):
+                nids = ['QA']
+            else:
+                nids = [idx]
+        else:
+            raise ValueError("Provide node_id or target_pos.")
+        
+        if print_info:
+            sep = '-' * 50
+            print(sep)
+            print("NODE INFO")
+            for nid in nids:
+                if nid in ('QA', 'qa'):
+                    pos = self.xyz_qa[0] if self.xyz_qa is not None else None
+                    if pos is not None:
+                        print(f"  {'QA':<8} │ pos = [{pos[0]*1000:>10.2f}, {pos[1]*1000:>10.2f}, {pos[2]*1000:>10.2f}] m")
+                    else:
+                        print(f"  {'QA':<8} │ position not available")
+                else:
+                    pos = self.xyz[nid]
+                    is_internal = self.internal[nid]
+                    node_type = "internal" if is_internal else "external"
+                    # Verificar si coincide con QA
+                    qa_match = ""
+                    if self.xyz_qa is not None:
+                        dist_to_qa = np.linalg.norm(pos - self.xyz_qa[0])
+                        if dist_to_qa < 1e-6:
+                            qa_match = "  ★ COINCIDES WITH QA"
+                    print(f"  N{nid:<6} │ pos = [{pos[0]*1000:>10.2f}, {pos[1]*1000:>10.2f}, {pos[2]*1000:>10.2f}] m │ {node_type}{qa_match}")
+            
+            # Si se dio target_pos, mostrar distancia
+            if target_pos is not None:
+                target = np.asarray(target_pos)
+                for nid in nids:
+                    if nid in ('QA', 'qa'):
+                        pos = self.xyz_qa[0]
+                    else:
+                        pos = self.xyz[nid]
+                    dist = np.linalg.norm(pos - target) * 1000  # a metros
+                    print(f"  Target   │ pos = [{target[0]*1000:>10.2f}, {target[1]*1000:>10.2f}, {target[2]*1000:>10.2f}] m │ dist = {dist:.2f} m")
+            print(sep)
+        
+        return nids
+
 
     def _donor_of_op(self, node_id, subfault_id):
         """Return donor node for OP pipeline."""
+        # Convertir 'QA' al índice numérico
+        if node_id in ('QA', 'qa'):
+            node_id = self._n_nodes
         slot = self._get_slot(node_id, subfault_id)
         return int(self._pairs_to_compute[slot, 0])
 
@@ -614,7 +710,8 @@ class ShakerMakerData:
                     xyz_origin=None, 
                     label_nodes=False, 
                     show_calculated=False,
-                    figsize=(8,6)):
+                    figsize=(8,6),
+                    axis_equal=False):
 
         """Plot the 3-D node domain of the DRM or SurfaceGrid object.
 
@@ -682,7 +779,12 @@ class ShakerMakerData:
                                              edgecolor='darkred',linewidths=1.5))
         if label_nodes: self._label_nodes_on_ax(ax,xyz_t,bounds,label_nodes,comp_donors)
         ax.set_xlabel("X' (m)"); ax.set_ylabel("Y' (m)"); ax.set_zlabel("Z' (m)")
-        ax.legend(); ax.grid(False); plt.tight_layout(); plt.show()
+        ax.legend(); ax.grid(False); 
+        if axis_equal is True:
+            ax.axis('equal')
+        plt.tight_layout(); 
+        plt.show()
+
         if xyz_qa_t is not None: print(f"QA position: {xyz_qa_t[0]}")
         return fig, ax
 
@@ -726,49 +828,51 @@ class ShakerMakerData:
         plt.tight_layout(); plt.show()
 
     def plot_node_gf(self,
-                    node_id=None,
-                    target_pos=None,
-                    xlim=None,
-                    subfault=0,
-                    figsize=(8, 10)):
-
-        """Plot Green's function time series for one or more nodes.
-
-        Parameters
-        ----------
-        node_id : int, str, or list, optional
-        target_pos : array-like (3,), optional
-        xlim : list, optional
-        subfault : int or list, default ``0``
-        figsize : tuple, default ``(8, 10)``
-        """
+                     node_id=None,
+                     target_pos=None,
+                     xlim=None,
+                     subfault=0,
+                     figsize=(8, 10)):
+        """Plot Green's function time series for one or more nodes."""
         if not self._gf_loaded and self.node_mapping is None:
-            print("No GFs available. Call load_gf_database() first."); return
-        nids    = self._collect_node_ids(node_id, target_pos)
-        sub_ids = subfault if isinstance(subfault,(list,np.ndarray)) else [subfault]
+            print("No GFs available. Call load_gf_database() first.")
+            return
+        nids = self._collect_node_ids(node_id, target_pos)
+        sub_ids = subfault if isinstance(subfault, (list, np.ndarray)) else [subfault]
         fig = plt.figure(figsize=figsize)
+        
         for nid in nids:
-            if nid in ('QA','qa'): print("GFs not available for QA."); continue
+            # Convertir 'QA' al índice numérico para _get_slot
+            if nid in ('QA', 'qa'):
+                nid_num = self._n_nodes
+                nid_label = 'QA'
+            else:
+                nid_num = nid
+                nid_label = f'N{nid}'
+            
             for sid in sub_ids:
-                slot = self._get_slot(nid, sid)
+                slot = self._get_slot(nid_num, sid)
                 with h5py.File(self._gf_h5_path, 'r') as f:
                     t0_path = f'tdata_dict/{slot}_t0'
                     t0 = f[t0_path][()] if t0_path in f else 0.0
-                lbl = f'N{nid}_S{sid}'
-                for k,comp in enumerate(('z','e','n'),1):
+                lbl = f'{nid_label}_S{sid}'
+                for k, comp in enumerate(('z', 'e', 'n'), 1):
                     gf_data = self.get_gf(nid, sid, comp)
                     time = np.arange(len(gf_data)) * self._dt_orig + t0
-                    plt.subplot(3,1,k)
+                    plt.subplot(3, 1, k)
                     plt.plot(time, gf_data, linewidth=1, label=lbl)
-        for k,t in enumerate(('Vertical (Z)','East (E)','North (N)'),1):
-            ax = plt.subplot(3,1,k)
-            ax.set_title(f'{t} — Green Function',fontweight='bold')
+        
+        for k, t in enumerate(('Vertical (Z)', 'East (E)', 'North (N)'), 1):
+            ax = plt.subplot(3, 1, k)
+            ax.set_title(f'{t} — Green Function', fontweight='bold')
             ax.set_xlabel('Time [s]')
             ax.set_ylabel('Amplitude')
-            ax.grid(True,alpha=0.3)
+            ax.grid(True, alpha=0.3)
             ax.legend(loc='upper right')
-            if xlim: ax.set_xlim(xlim)
-        plt.tight_layout(); plt.show()
+            if xlim:
+                ax.set_xlim(xlim)
+        plt.tight_layout()
+        plt.show()
 
 
     
@@ -778,49 +882,53 @@ class ShakerMakerData:
                             xlim=None,
                             subfault=0,
                             figsize=(10, 8)):
-
-        """Plot the 9-component tensor Green's functions.
-
-        Parameters
-        ----------
-        node_id : int, str, or list, optional
-        target_pos : array-like (3,), optional
-        xlim : list, optional
-        subfault : int or list, default ``0``
-        figsize : tuple, default ``(10, 8)``
-        """
+        """Plot the 9-component tensor Green's functions."""
         if not self._gf_loaded:
-            print("No GFs. Call load_gf_database() first."); return
-        nids    = self._collect_node_ids(node_id, target_pos)
-        sub_ids = subfault if isinstance(subfault,(list,np.ndarray)) else [subfault]
-        labels  = [f'G_{i+1}{j+1}' for i in range(3) for j in range(3)]
+            print("No GFs. Call load_gf_database() first.")
+            return
+        nids = self._collect_node_ids(node_id, target_pos)
+        sub_ids = subfault if isinstance(subfault, (list, np.ndarray)) else [subfault]
+        labels = [f'G_{i+1}{j+1}' for i in range(3) for j in range(3)]
         fig, axes = plt.subplots(3, 3, figsize=figsize)
+        
         for nid in nids:
-            if nid in ('QA','qa'): continue
+            # Convertir 'QA' al índice numérico
+            if nid in ('QA', 'qa'):
+                nid_num = self._n_nodes
+                nid_label = 'QA'
+            else:
+                nid_num = nid
+                nid_label = f'N{nid}'
+            
             for sid in sub_ids:
-                slot   = self._get_slot(nid, sid)
-                donor  = self._pairs_to_compute[slot,0]
-                if donor != nid:
-                    print(f"Node {nid}/sub {sid} → slot {slot} (donor {donor})")
-                with h5py.File(self._gf_h5_path,'r') as f:
+                slot = self._get_slot(nid_num, sid)
+                donor = self._pairs_to_compute[slot, 0]
+                if donor != nid_num:
+                    print(f"Node {nid_label}/sub {sid} → slot {slot} (donor {donor})")
+                with h5py.File(self._gf_h5_path, 'r') as f:
                     tp = f'tdata_dict/{slot}_tdata'
-                    if tp not in f: continue
+                    if tp not in f:
+                        continue
                     tdata = f[tp][:]
                     t0_path = f'tdata_dict/{slot}_t0'
                     t0 = f[t0_path][()] if t0_path in f else 0.0
-                time = np.arange(tdata.shape[0])*self._dt_orig + t0
-                lbl  = f'N{nid}_S{sid}'
+                time = np.arange(tdata.shape[0]) * self._dt_orig + t0
+                lbl = f'{nid_label}_S{sid}'
                 for j in range(9):
-                    axes[j//3,j%3].plot(time,tdata[:,j],linewidth=0.8,label=lbl)
-        for j,lbl in enumerate(labels):
-            ax = axes[j//3,j%3]
-            ax.set_title(lbl,fontsize=11,fontweight='bold')
-            ax.set_xlabel('Time [s]',fontsize=9); ax.set_ylabel('Amplitude',fontsize=9)
-            ax.grid(True,alpha=0.3)
-            if xlim: ax.set_xlim(xlim)
-        axes[0,2].legend(fontsize=8)
-        plt.suptitle('Tensor Green Functions',fontsize=14,fontweight='bold')
-        plt.tight_layout(); plt.show()
+                    axes[j // 3, j % 3].plot(time, tdata[:, j], linewidth=0.8, label=lbl)
+        
+        for j, lbl in enumerate(labels):
+            ax = axes[j // 3, j % 3]
+            ax.set_title(lbl, fontsize=11, fontweight='bold')
+            ax.set_xlabel('Time [s]', fontsize=9)
+            ax.set_ylabel('Amplitude', fontsize=9)
+            ax.grid(True, alpha=0.3)
+            if xlim:
+                ax.set_xlim(xlim)
+        axes[0, 2].legend(fontsize=8)
+        plt.suptitle('Tensor Green Functions', fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        plt.show()
 
     
 
@@ -917,11 +1025,13 @@ class ShakerMakerData:
         print("="*60)
         return fig, ax
 
+
     def plot_gf_connections(self,
                             node_id,
                             xyz_origin=None,
                             label_nodes=False,
-                            figsize=(8, 6)):
+                            figsize=(8, 6),
+                            axis_equal=False):
         """Visualise donor-recipient GF connections for a single node.
 
         Prints a full node classification summary (super donors, solitary
@@ -950,15 +1060,25 @@ class ShakerMakerData:
             print("No GFs. Call load_gf_database() first.")
             return
 
-        #  Classification 
-        comp_donors  = set(np.unique(self._pairs_to_compute[:, 0]))
+        # Convertir 'QA' al índice numérico
+        if node_id in ('QA', 'qa'):
+            node_id_num = self._n_nodes
+            node_id_label = 'QA'
+        else:
+            node_id_num = node_id
+            node_id_label = str(node_id)
+
+        # Classification
+        comp_donors = set(np.unique(self._pairs_to_compute[:, 0]))
         super_donors = set()
-        for node in range(len(self.xyz)):
+        # Incluir QA en el análisis
+        total_nodes = self._n_nodes + (1 if self.xyz_qa is not None else 0)
+        for node in range(total_nodes):
             donor = self._donor_of_op(node, 0)
             if donor != node:
                 super_donors.add(donor)
-        solitary       = comp_donors - super_donors
-        all_nodes      = set(range(len(self.xyz)))
+        solitary = comp_donors - super_donors
+        all_nodes = set(range(total_nodes))
         pure_receivers = all_nodes - comp_donors
 
         sep = '--' * 50
@@ -971,51 +1091,63 @@ class ShakerMakerData:
         print(f"  Pure Receivers  ({len(pure_receivers)})  :  "
               f"{sorted(int(x) for x in pure_receivers)}")
         print(sep)
-        print(f"  Analyzing Node : {node_id}")
+        print(f"  Analyzing Node : {node_id_label}")
         print('--' * 50)
 
-        if node_id in super_donors:
-            recs     = [n for n in range(len(self.xyz))
-                        if n != node_id and self._donor_of_op(n, 0) == node_id]
-            dtp, rtp = node_id, recs
-            print(f"  Node {node_id}  →  SUPER DONOR  |  donates to {len(recs)} nodes")
-        elif node_id in solitary:
-            dtp, rtp = node_id, []
-            print(f"  Node {node_id}  →  SOLITARY DONOR  |  uses its own GFs only")
+        if node_id_num in super_donors:
+            recs = [n for n in range(total_nodes)
+                    if n != node_id_num and self._donor_of_op(n, 0) == node_id_num]
+            dtp, rtp = node_id_num, recs
+            print(f"  Node {node_id_label}  →  SUPER DONOR  |  donates to {len(recs)} nodes")
+        elif node_id_num in solitary:
+            dtp, rtp = node_id_num, []
+            print(f"  Node {node_id_label}  →  SOLITARY DONOR  |  uses its own GFs only")
         else:
-            dtp = self._donor_of_op(node_id, 0)
-            rtp = [node_id]
-            print(f"  Node {node_id}  →  RECEIVER  ←  donor {dtp}")
+            dtp = self._donor_of_op(node_id_num, 0)
+            rtp = [node_id_num]
+            print(f"  Node {node_id_label}  →  RECEIVER  ←  donor {dtp}")
         print(sep + '\n')
 
-        #  Geometry 
-        xyz_t    = _rotate(self.xyz)
+        # Geometry - incluir QA en xyz_t
+        xyz_t = _rotate(self.xyz)
         xyz_qa_t = _rotate(self.xyz_qa) if self.xyz_qa is not None else None
+        
+        # Crear array completo incluyendo QA
+        if xyz_qa_t is not None:
+            xyz_all_t = np.vstack([xyz_t, xyz_qa_t])
+        else:
+            xyz_all_t = xyz_t
+        
         if xyz_origin is not None and xyz_qa_t is not None:
             t = np.asarray(xyz_origin) - xyz_qa_t[0]
-            xyz_t    += t
+            xyz_t += t
             xyz_qa_t += t
+            xyz_all_t = np.vstack([xyz_t, xyz_qa_t])
+        
         bbox = xyz_t[self.internal] if self.internal.any() else xyz_t
         _, faces, bounds = self._build_cube_faces(bbox)
 
-        #  Plot 
+        # Plot
         fig = plt.figure(figsize=figsize)
-        ax  = fig.add_subplot(111, projection='3d')
+        ax = fig.add_subplot(111, projection='3d')
 
-        ax.scatter(xyz_t[:, 0], xyz_t[:, 1], xyz_t[:, 2],marker='s',
+        ax.scatter(xyz_t[:, 0], xyz_t[:, 1], xyz_t[:, 2], marker='s',
                    c='blue', s=30, alpha=0.1)
 
-        dp = xyz_t[dtp]
+        # Donor point - usar xyz_all_t para incluir QA
+        dp = xyz_all_t[dtp]
         ax.scatter(*dp, c='red', marker='s', s=100,
                    edgecolors='darkred', linewidths=2, zorder=10, alpha=0.5)
 
+        # Receiver points
         for rec in rtp:
-            rp = xyz_t[rec]
+            rp = xyz_all_t[rec]
             ax.scatter(*rp, c='orange', marker='o', s=80,
                        edgecolors='darkorange', linewidths=1.5, alpha=0.5)
             ax.plot([dp[0], rp[0]], [dp[1], rp[1]], [dp[2], rp[2]],
                     color='darkorange', linestyle='--', alpha=0.5, linewidth=2)
 
+        # QA marker (siempre mostrar si existe)
         if xyz_qa_t is not None:
             ax.scatter(*xyz_qa_t[0], c='green', marker='*', s=300,
                        label='QA', zorder=10, edgecolors='black', linewidths=2)
@@ -1024,21 +1156,29 @@ class ShakerMakerData:
                                               edgecolor='darkred', linewidths=1.5))
 
         if label_nodes == 'donor_receivers':
-            # Label donor in red
-            x, y, z = xyz_t[dtp]
-            ax.text(x, y, z, str(dtp), fontsize=10,
+            # Label donor
+            x, y, z = xyz_all_t[dtp]
+            dtp_label = 'QA' if dtp == self._n_nodes else str(dtp)
+            ax.text(x, y, z, dtp_label, fontsize=10,
                     color='darkred', fontweight='bold')
-            # Label receivers in blue
+            # Label receivers
             for rec in rtp:
-                x, y, z = xyz_t[rec]
-                ax.text(x, y, z, str(rec), fontsize=9,
+                x, y, z = xyz_all_t[rec]
+                rec_label = 'QA' if rec == self._n_nodes else str(rec)
+                ax.text(x, y, z, rec_label, fontsize=9,
                         color='darkblue', fontweight='bold')
         elif label_nodes:
             self._label_nodes_on_ax(ax, xyz_t, bounds, label_nodes, comp_donors)
 
-        ax.set_xlabel("X' (m)"); ax.set_ylabel("Y' (m)"); ax.set_zlabel("Z' (m)")
-        ax.legend(); ax.grid(False)
-        plt.tight_layout(); plt.show()
+        ax.set_xlabel("X' (m)")
+        ax.set_ylabel("Y' (m)")
+        ax.set_zlabel("Z' (m)")
+        ax.legend()
+        ax.grid(False)
+        if axis_equal is True:
+            ax.axis('equal')
+        plt.tight_layout()
+        plt.show()
 
 
 
