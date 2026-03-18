@@ -827,7 +827,7 @@ class ShakerMakerData:
         for nid in nids:
             data, lbl = self._resolve_node(nid, data_type)
             for k in range(1,4):
-                plt.subplot(3,1,k); plt.plot(self.time, data[k-1] / factor, linewidth=1, label=lbl)
+                plt.subplot(3,1,k); plt.plot(self.time, data[k-1] * factor, linewidth=1, label=lbl)
         for k,comp in enumerate(('Vertical (Z)','East (E)','North (N)'),1):
             ax = plt.subplot(3,1,k)
             ax.set_title(f'{comp} — {ylabel}',fontweight='bold')
@@ -976,7 +976,7 @@ class ShakerMakerData:
         fig, axes = plt.subplots(3, 1, figsize=figsize)
         for nid in nids:
             data, lbl = self._resolve_node(nid, data_type)
-            specs = [NewmarkSpectrumAnalyzer.compute(data[i] * scale / factor, dt) for i in range(3)]
+            specs = [NewmarkSpectrumAnalyzer.compute(data[i] * scale * factor, dt) for i in range(3)]
             T = specs[0]['T']
             for ax, sp in zip(axes, specs):
                 ax.plot(T, sp[spectral_type], linewidth=2, label=lbl)
@@ -1217,7 +1217,11 @@ class ShakerMakerData:
             mag  = self.get_surface_snapshot(it, component, data_type)
             vmax = self._vmax[data_type][component.lower()]; vmin = -vmax
             clbl = {'z':'Vertical (Z)','e':'East (E)','n':'North (N)'}[component.lower()]
-        x=self.xyz[:,0]*1000; y=self.xyz[:,1]*1000; z=self.xyz[:,2]*1000
+        # x=self.xyz[:,0]*1000; y=self.xyz[:,1]*1000; z=self.xyz[:,2]*1000
+
+        xyz_t = _rotate(self.xyz)
+        x=xyz_t[:,0]; y=xyz_t[:,1]; z=xyz_t[:,2]
+        
         fig = plt.figure(figsize=figsize); ax = fig.add_subplot(111,projection='3d')
         ax.scatter(x,y,z,c='lightgray',s=s,alpha=0.3)
         active = np.abs(mag) >= vmax*0.01
@@ -1272,7 +1276,11 @@ class ShakerMakerData:
             else:
                 vmax = self._vmax[data_type][component.lower()]; vmin = -vmax
 
-        x=self.xyz[:,0]*1000; y=self.xyz[:,1]*1000; z=self.xyz[:,2]*1000
+        # x=self.xyz[:,0]*1000; y=self.xyz[:,1]*1000; z=self.xyz[:,2]*1000
+
+        xyz_t = _rotate(self.xyz)
+        x=xyz_t[:,0]; y=xyz_t[:,1]; z=xyz_t[:,2]
+
         for i,t in enumerate(np.linspace(time_start, time_end, n_frames)):
             it = int(np.argmin(np.abs(self.time - t)))
             if component.lower() == 'resultant':
@@ -1329,6 +1337,10 @@ class ShakerMakerData:
         os.makedirs(output_dir, exist_ok=True)
         if time_end is None: time_end = self.time[-1]
         x=self.xyz[:,0]*1000; y=self.xyz[:,1]*1000; z=self.xyz[:,2]*1000
+
+        xyz_t = _rotate(self.xyz)
+        x=xyz_t[:,0]; y=xyz_t[:,1]; z=xyz_t[:,2]
+
         tol = self.spacing[0]*0.1 if self.spacing[0]>0 else 1.0
         if plane.lower()=='xy':
             pmask = np.abs(z-plane_value)<tol; tpl = f'Z = {plane_value:.1f} m'
