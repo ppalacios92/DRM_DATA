@@ -190,6 +190,10 @@ class ShakerMakerData:
                 _ver = f['DRM_Metadata/program_used'][()].decode()
                 _dat = f['DRM_Metadata/created_on'][()].decode()
                 print(f"  Version  : {_ver}  |  {_dat}")
+        import psutil
+        mem = psutil.virtual_memory()
+        print(f"  RAM      : {mem.used/1e9:.1f} GB used  |  "
+              f"{mem.available/1e9:.1f} GB free  |  {mem.percent:.1f}%")
         print(sep + '\n')
 
     # ------------------------------------------------------------------
@@ -1426,6 +1430,7 @@ class ShakerMakerData:
     def plot_node_arias(self,
                         node_id=None,
                         target_pos=None,
+                        data_type='accel',
                         xlim=None,
                         figsize=(10, 8),
                         factor=1.0):
@@ -1435,6 +1440,7 @@ class ShakerMakerData:
         ----------
         node_id : int, str, or list, optional
         target_pos : array-like (3,), optional
+        data_type : {'accel', 'vel', 'disp'}, default ``'accel'``
         xlim : list, optional
         figsize : tuple, default ``(10, 8)``
         factor : float, default ``1.0``
@@ -1448,7 +1454,7 @@ class ShakerMakerData:
         fig, axes = plt.subplots(3, 1, figsize=figsize)
 
         for nid in nids:
-            data, lbl = self._resolve_node(nid, 'accel')
+            data, lbl = self._resolve_node(nid, data_type)
             for ax, sig in zip(axes, (data[0], data[1], data[2])):
                 IA_pct, t_start, t_end, ia_total, _ = AriasIntensityAnalyzer.compute(
                     sig * factor / 9.81, dt)
@@ -1474,6 +1480,240 @@ class ShakerMakerData:
 
         plt.tight_layout()
         plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+#### PLOT SURFACES WITH PARALLEL POOL
+    def plot_surface_newmark(self,
+                             T_target=0.0,
+                             component='z',
+                             data_type='accel',
+                             spectral_type='PSa',
+                             factor=1.0,
+                             cmap='hot_r',
+                             figsize=(12, 8),
+                             elev=30, azim=45,
+                             s=20, alpha=0.85,
+                             axis_equal=False,
+                             n_jobs=-1):
+        """Plot a 3-D scatter map of spectral values at a given period T.
+
+        Full spectra (Z, E, N) are cached per data_type only. Changing
+        component, T_target, factor, spectral_type, or any plot parameter
+        is instantaneous. Only changing data_type triggers recomputation.
+
+        Parameters
+        ----------
+        T_target : float, default ``0.0``
+            Target period in seconds. Use ``0.0`` for PGA.
+        component : {'z', 'e', 'n', 'resultant'}, default ``'z'``
+        data_type : {'accel', 'vel', 'disp'}, default ``'accel'``
+        spectral_type : {'PSa', 'Sa', 'PSv', 'Sv', 'Sd'}, default ``'PSa'``
+        factor : float, default ``1.0``
+            Multiplier applied to spectral values before plotting.
+        cmap : str, default ``'hot_r'``
+        figsize : tuple, default ``(12, 8)``
+        elev, azim : float
+        s : int, default ``20``
+        alpha : float, default ``0.85``
+        axis_equal : bool, default ``False``
+        n_jobs : int, default ``-1``
+            Number of parallel workers. ``-1`` uses all available CPUs.
+        """
+        from joblib import Parallel, delayed
+
+        dt        = self.time[1] - self.time[0]
+        n         = self._n_nodes
+        comp      = component.lower()
+        cache_key = (data_type,)
+
+        # Cache check
+        if not hasattr(self, '_newmark_cache'):
+            self._newmark_cache = {}
+
+        if cache_key in self._newmark_cache:
+            print(f"  Cache hit — using stored spectra for {data_type}")
+            T_array, sa_full = self._newmark_cache[cache_key]
+        else:
+            print(f"Computing spectra for {n} nodes using n_jobs={n_jobs}...")
+            print("  Loading data into memory...")
+            all_data = np.zeros((n, 3, len(self.time)))
+            for i in range(n):
+                all_data[i] = self.get_node_data(i, data_type)
+            print("  Data loaded. Computing spectra...")
+
+            def _compute_spectrum(i):
+                data  = all_data[i]   # (3, Nt)
+                specs = [NewmarkSpectrumAnalyzer.compute(data[k], dt)
+                         for k in range(3)]
+                T  = specs[0]['T']
+                sa = {qty: np.array([sp[qty] for sp in specs])   # (3, n_periods)
+                      for qty in ('PSa', 'Sa', 'PSv', 'Sv', 'Sd')}
+                return T, sa
+
+            results = Parallel(n_jobs=n_jobs, verbose=5)(
+                delayed(_compute_spectrum)(i) for i in range(n))
+
+            T_array = results[0][0]
+            # sa_full[qty] shape: (n_nodes, 3, n_periods)
+            sa_full = {qty: np.array([r[1][qty] for r in results])
+                       for qty in ('PSa', 'Sa', 'PSv', 'Sv', 'Sd')}
+
+            self._newmark_cache[cache_key] = (T_array, sa_full)
+            print(f"Done. All spectral quantities cached for {data_type}")
+
+        # Apply component, T_target, spectral_type and factor
+        sp_data = sa_full[spectral_type]   # (n_nodes, 3, n_periods)
+
+        if comp == 'resultant':
+            sa_map = np.array([
+                np.mean([np.interp(T_target, T_array, sp_data[i][k])
+                         for k in range(3)])
+                for i in range(n)]) * factor
+        else:
+            k = {'z': 0, 'e': 1, 'n': 2}[comp]
+            sa_map = np.array([
+                np.interp(T_target, T_array, sp_data[i][k])
+                for i in range(n)]) * factor
+
+        print(f"  {spectral_type}(T={T_target}s) | {comp} | factor={factor}  "
+              f"Max={sa_map.max():.4f}  Min={sa_map.min():.4f}")
+
+        # Plot 
+        xyz_t = _rotate(self.xyz)
+        x = xyz_t[:, 0]; y = xyz_t[:, 1]; z = xyz_t[:, 2]
+        clbl  = {'z': 'Vertical (Z)', 'e': 'East (E)',
+                 'n': 'North (N)', 'resultant': 'Resultant'}[comp]
+
+        fig = plt.figure(figsize=figsize)
+        ax  = fig.add_subplot(111, projection='3d')
+        sc  = ax.scatter(x, y, z, c=sa_map, cmap=cmap, s=s, alpha=alpha,
+                         vmin=0, vmax=sa_map.max())
+        fig.colorbar(sc, ax=ax, shrink=0.5,
+                     label=f'{spectral_type}(T={T_target}s)')
+
+        ax.set_xlabel('X (m)'); ax.set_ylabel('Y (m)'); ax.set_zlabel('Z (m)')
+        ax.grid(False)
+        if axis_equal:
+            ax.axis('equal')
+        ax.set_title(f'{self.name} | {spectral_type}(T={T_target}s) | {clbl}',
+                     fontweight='bold')
+        ax.view_init(elev=elev, azim=azim)
+        plt.tight_layout()
+        plt.show()
+
+
+    def plot_surface_arias(self,
+                           component='z',
+                           data_type='accel',
+                           factor=1.0,
+                           cmap='hot_r',
+                           figsize=(12, 8),
+                           elev=30, azim=45,
+                           s=20, alpha=0.85,
+                           axis_equal=False,
+                           n_jobs=-1):
+        """Plot a 3-D scatter map of Arias intensity for every node.
+
+        Full Arias intensity is cached per data_type only. Changing
+        component, factor, or any plot parameter is instantaneous.
+        Only changing data_type triggers recomputation.
+
+        Parameters
+        ----------
+        component : {'z', 'e', 'n', 'resultant'}, default ``'z'``
+        data_type : {'accel', 'vel', 'disp'}, default ``'accel'``
+        factor : float, default ``1.0``
+            Multiplier applied to Arias values before plotting.
+        cmap : str, default ``'hot_r'``
+        figsize : tuple, default ``(12, 8)``
+        elev, azim : float
+        s : int, default ``20``
+        alpha : float, default ``0.85``
+        axis_equal : bool, default ``False``
+        n_jobs : int, default ``-1``
+            Number of parallel workers. ``-1`` uses all available CPUs.
+        """
+        from joblib import Parallel, delayed
+        from EarthquakeSignal.core.arias_intensity import AriasIntensityAnalyzer
+
+        dt        = self.time[1] - self.time[0]
+        n         = self._n_nodes
+        comp      = component.lower()
+        cache_key = (data_type, 'arias')
+
+        # Cache check
+        if not hasattr(self, '_newmark_cache'):
+            self._newmark_cache = {}
+
+        if cache_key in self._newmark_cache:
+            print(f"  Cache hit — using stored Arias for {data_type}")
+            ia_full = self._newmark_cache[cache_key]
+        else:
+            print(f"Computing Arias intensity for {n} nodes using n_jobs={n_jobs}...")
+            print("  Loading data into memory...")
+            all_data = np.zeros((n, 3, len(self.time)))
+            for i in range(n):
+                all_data[i] = self.get_node_data(i, data_type)
+            print("  Data loaded. Computing Arias intensity...")
+
+            def _compute_arias(i):
+                data = all_data[i]   # (3, Nt)
+                ia   = np.zeros(3)
+                for k in range(3):
+                    _, _, _, ia_total, _ = AriasIntensityAnalyzer.compute(
+                        data[k] / 9.81, dt)
+                    ia[k] = ia_total
+                return ia   # (3,)
+
+            results = Parallel(n_jobs=n_jobs, verbose=5)(
+                delayed(_compute_arias)(i) for i in range(n))
+
+            # ia_full shape: (n_nodes, 3)  — columns: Z, E, N
+            ia_full = np.array(results)
+            self._newmark_cache[cache_key] = ia_full
+            print(f"Done. Arias intensity cached for {data_type}")
+
+        # Apply component and factor
+        if comp == 'resultant':
+            ia_map = np.mean(ia_full, axis=1) * factor
+        else:
+            k      = {'z': 0, 'e': 1, 'n': 2}[comp]
+            ia_map = ia_full[:, k] * factor
+
+        print(f"  Arias | {comp} | factor={factor}  "
+              f"Max={ia_map.max():.4f}  Min={ia_map.min():.4f}")
+
+        # Plot
+        xyz_t = _rotate(self.xyz)
+        x = xyz_t[:, 0]; y = xyz_t[:, 1]; z = xyz_t[:, 2]
+        clbl  = {'z': 'Vertical (Z)', 'e': 'East (E)',
+                 'n': 'North (N)', 'resultant': 'Resultant'}[comp]
+
+        fig = plt.figure(figsize=figsize)
+        ax  = fig.add_subplot(111, projection='3d')
+        sc  = ax.scatter(x, y, z, c=ia_map, cmap=cmap, s=s, alpha=alpha,
+                         vmin=0, vmax=ia_map.max())
+        fig.colorbar(sc, ax=ax, shrink=0.5, label=f'Arias Intensity [m/s] ')
+
+        ax.set_xlabel('X (m)'); ax.set_ylabel('Y (m)'); ax.set_zlabel('Z (m)')
+        ax.grid(False)
+        if axis_equal:
+            ax.axis('equal')
+        ax.set_title(f'{self.name} | Arias Intensity | {clbl}', fontweight='bold')
+        ax.view_init(elev=elev, azim=azim)
+        plt.tight_layout()
+        plt.show()
+
 
     
 # # ---------------------------------------------------------------------------

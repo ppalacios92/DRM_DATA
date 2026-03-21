@@ -221,8 +221,10 @@ def plot_models_newmark(models,
     plt.show()
 
 
+
 def plot_models_gf(models,
-                   node_ids,
+                   node_ids=None,
+                   target_pos=None,
                    subfault=0,
                    xlim=None,
                    figsize=(8, 10),
@@ -235,30 +237,41 @@ def plot_models_gf(models,
     Parameters
     ----------
     models : list of ShakerMakerData
-        Models to compare.
-    node_ids : list of list
-        One sub-list per model. Each sub-list contains the node indices
-        (int or ``'QA'``) to plot GFs for.
+    node_ids : list of list, optional
+        One sub-list per model with node indices (int or ``'QA'``).
         Example: ``[[0, 5], [217], ['QA']]``
+    target_pos : list of array-like, optional
+        One position per model ``[x, y, z]`` in km. Overrides ``node_ids``
+        when provided. Use ``None`` entries to fall back to ``node_ids``
+        for specific models. Example: ``[[6,8,0], None, [6,8,0]]``
     subfault : int or list of int, default ``0``
-        Subfault index or indices.
     xlim : list of float, optional
-        Time axis limits ``[t_min, t_max]`` in seconds.
     figsize : tuple of float, default ``(8, 10)``
     factor : float, default ``1.0``
-        Multiplier applied to every GF signal before plotting.
     """
-    if len(models) != len(node_ids):
-        raise ValueError("models and node_ids must have the same length.")
+    if node_ids is None and target_pos is None:
+        raise ValueError("Provide node_ids or target_pos.")
+    if len(models) != len(node_ids if node_ids else target_pos):
+        raise ValueError("models and node_ids / target_pos must have the same length.")
 
-    sub_ids = subfault if isinstance(subfault, (list, np.ndarray)) else [subfault]
+    sub_ids   = subfault if isinstance(subfault, (list, np.ndarray)) else [subfault]
+    n         = len(models)
+    nids_list = node_ids  if node_ids   else [None] * n
+    tpos_list = target_pos if target_pos else [None] * n
 
     fig, axes = plt.subplots(3, 1, figsize=figsize)
 
-    for obj, nids in zip(models, node_ids):
+    for obj, nids, tpos in zip(models, nids_list, tpos_list):
         if not obj._gf_loaded:
             print(f"  Warning: {obj.model_name} has no GFs loaded — skipped.")
             continue
+
+        # Resolve node IDs
+        if tpos is not None:
+            nids = obj._collect_node_ids(target_pos=tpos, print_info=True)
+        elif nids is not None:
+            nids = obj._collect_node_ids(node_id=nids, print_info=True)
+
         for nid in nids:
             if nid in ('QA', 'qa'):
                 nid_num   = obj._n_nodes
@@ -289,7 +302,8 @@ def plot_models_gf(models,
 
 
 def plot_models_tensor_gf(models,
-                          node_ids,
+                          node_ids=None,
+                          target_pos=None,
                           subfault=0,
                           xlim=None,
                           figsize=(12, 10),
@@ -302,29 +316,41 @@ def plot_models_tensor_gf(models,
     Parameters
     ----------
     models : list of ShakerMakerData
-        Models to compare.
-    node_ids : list of list
+    node_ids : list of list, optional
         One sub-list per model with node indices (int or ``'QA'``).
+    target_pos : list of array-like, optional
+        One position per model ``[x, y, z]`` in km. Overrides ``node_ids``
+        when provided. Use ``None`` entries to fall back to ``node_ids``
+        for specific models.
     subfault : int or list of int, default ``0``
-        Subfault index or indices.
     xlim : list of float, optional
-        Time axis limits ``[t_min, t_max]`` in seconds.
     figsize : tuple of float, default ``(12, 10)``
     factor : float, default ``1.0``
-        Multiplier applied to every tensor component before plotting.
     """
-    if len(models) != len(node_ids):
-        raise ValueError("models and node_ids must have the same length.")
+    if node_ids is None and target_pos is None:
+        raise ValueError("Provide node_ids or target_pos.")
+    if len(models) != len(node_ids if node_ids else target_pos):
+        raise ValueError("models and node_ids / target_pos must have the same length.")
 
-    sub_ids = subfault if isinstance(subfault, (list, np.ndarray)) else [subfault]
-    labels  = [f'G_{i+1}{j+1}' for i in range(3) for j in range(3)]
+    sub_ids   = subfault if isinstance(subfault, (list, np.ndarray)) else [subfault]
+    labels    = [f'G_{i+1}{j+1}' for i in range(3) for j in range(3)]
+    n         = len(models)
+    nids_list = node_ids   if node_ids   else [None] * n
+    tpos_list = target_pos if target_pos else [None] * n
 
     fig, axes = plt.subplots(3, 3, figsize=figsize)
 
-    for obj, nids in zip(models, node_ids):
+    for obj, nids, tpos in zip(models, nids_list, tpos_list):
         if not obj._gf_loaded:
             print(f"  Warning: {obj.model_name} has no GFs loaded — skipped.")
             continue
+
+        # Resolve node IDs
+        if tpos is not None:
+            nids = obj._collect_node_ids(target_pos=tpos, print_info=True)
+        elif nids is not None:
+            nids = obj._collect_node_ids(node_id=nids, print_info=True)
+
         for nid in nids:
             if nid in ('QA', 'qa'):
                 nid_num   = obj._n_nodes
@@ -366,7 +392,7 @@ def plot_models_tensor_gf(models,
     plt.show()
 
 
-def plot_models_DRM(models,
+def plot_models_domain(models,
                     xlim=None,
                     ylim=None,
                     zlim=None,
@@ -447,6 +473,80 @@ def plot_models_DRM(models,
     plt.tight_layout()
     plt.show()
 
+
+def plot_models_arias(models,
+                      node_ids=None,
+                      target_pos=None,
+                      data_type='accel',
+                      xlim=None,
+                      figsize=(10, 8),
+                      factor=1.0):
+    """Plot Arias intensity curves for multiple models, overlaid in one figure.
+
+    Parameters
+    ----------
+    models : list of ShakerMakerData
+    node_ids : list of list, optional
+        One sub-list per model with node indices (int or ``'QA'``).
+        Example: ``[['QA'], ['QA', 0], [217]]``
+    target_pos : list of array-like, optional
+        One position per model ``[x, y, z]`` in km. Overrides ``node_ids``.
+        Example: ``[[6,8,0], [6,8,0], [6,8,0]]``
+    data_type : {'accel', 'vel', 'disp'}, default ``'accel'``
+    xlim : list of float, optional
+    figsize : tuple of float, default ``(10, 8)``
+    factor : float, default ``1.0``
+        Multiplier applied to every signal before computing Arias intensity.
+    """
+    from EarthquakeSignal.core.arias_intensity import AriasIntensityAnalyzer
+
+    if node_ids is None and target_pos is None:
+        raise ValueError("Provide node_ids or target_pos.")
+    if len(models) != len(node_ids if node_ids else target_pos):
+        raise ValueError("models and node_ids / target_pos must have the same length.")
+
+    n         = len(models)
+    nids_list = node_ids   if node_ids   else [None] * n
+    tpos_list = target_pos if target_pos else [None] * n
+
+    fig, axes = plt.subplots(3, 1, figsize=figsize)
+
+    for obj, nids, tpos in zip(models, nids_list, tpos_list):
+        dt = obj.time[1] - obj.time[0]
+
+        if tpos is not None:
+            nids = obj._collect_node_ids(target_pos=tpos, print_info=True)
+        elif nids is not None:
+            nids = obj._collect_node_ids(node_id=nids, print_info=True)
+
+        for nid in nids:
+            data, lbl = obj._resolve_node(nid, 'accel')
+            for ax, sig in zip(axes, (data[0], data[1], data[2])):
+                IA_pct, t_start, t_end, ia_total, _ = AriasIntensityAnalyzer.compute(
+                    sig * factor / 9.81, dt)
+                t = np.arange(len(IA_pct)) * dt
+                line, = ax.plot(t, IA_pct, linewidth=1.5,
+                                label=f"{lbl} | Ia={ia_total:.3f} m/s")
+                ax.axvline(t_start, color=line.get_color(),
+                           linestyle='--', linewidth=1, alpha=0.5)
+                ax.axvline(t_end, color=line.get_color(),
+                           linestyle='--', linewidth=1, alpha=0.5)
+
+    for ax, comp in zip(axes, ('Vertical (Z)', 'East (E)', 'North (N)')):
+        ax.axhline(5,  color='gray', linestyle=':', linewidth=1, alpha=0.7)
+        ax.axhline(95, color='gray', linestyle=':', linewidth=1, alpha=0.7)
+        ax.set_title(f'{comp} — Arias Intensity', fontweight='bold')
+        ax.set_xlabel('Time [s]')
+        ax.set_ylabel('IA (%)')
+        ax.set_ylim(0, 100)
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc='upper left')
+        if xlim:
+            ax.set_xlim(xlim)
+
+    plt.tight_layout()
+    plt.show()
+    
 
 # ---------------------------------------------------------------------------
 # Station + DRM mixed helpers — reserved for future release
