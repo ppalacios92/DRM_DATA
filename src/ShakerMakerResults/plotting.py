@@ -74,7 +74,6 @@ def _get_node_data(obj, node_id, data_type):
         data = obj.get_node_data(node_id, data_type)
     return data[0], data[1], data[2]
 
-
 def _get_gf_time(obj, slot):
     """Return the GF time vector for a given slot, accounting for t0.
 
@@ -87,13 +86,13 @@ def _get_gf_time(obj, slot):
     -------
     np.ndarray
     """
+
     t0 = 0.0
     with h5py.File(obj._gf_h5_path, 'r') as f:
-        t0_path = f'tdata_dict/{slot}_t0'
-        if t0_path in f:
-            t0 = float(f[t0_path][()])
-    n = obj._n_time_gf
-    return np.arange(n) * obj._dt_orig + t0
+        if 't0' in f:
+            t0 = float(f['t0'][slot])
+        nt = f['tdata'].shape[1] 
+    return np.arange(nt) * obj._dt_orig + t0
 
 
 # ---------------------------------------------------------------------------
@@ -240,68 +239,157 @@ def plot_models_gf(models,
                    subfault=0,
                    xlim=None,
                    figsize=(8, 10),
-                   factor=1.0):
+                   factor=1.0,
+                   ffsp_source=None,
+                   strikes=None, dips=None, rakes=None,
+                   src_x=None, src_y=None,
+                   internal_ref=None,
+                   external_coord=None):
     """Plot Green's function time series for multiple models, overlaid in one figure.
-
-    Only models that have a GF database loaded (via ``load_gf_database()``)
-    will contribute curves. Models without GFs are skipped with a warning.
 
     Parameters
     ----------
     models : list of ShakerMakerData
     node_ids : list of list, optional
-        One sub-list per model with node indices (int or ``'QA'``).
-        Example: ``[[0, 5], [217], ['QA']]``
     target_pos : list of array-like, optional
-        One position per model ``[x, y, z]`` in km. Overrides ``node_ids``
-        when provided. Use ``None`` entries to fall back to ``node_ids``
-        for specific models. Example: ``[[6,8,0], None, [6,8,0]]``
-    subfault : int or list of int, default ``0``
+    subfault : int or list of int, default 0
     xlim : list of float, optional
-    figsize : tuple of float, default ``(8, 10)``
-    factor : float, default ``1.0``
+    figsize : tuple, default (8, 10)
+    factor : float, default 1.0
+    ffsp_source : list of FFSPSource or None, optional
+        One per model. Use None for models without FFSP.
+    strikes, dips, rakes : list of list of float, optional
+        One sublist per model. e.g. [[0],[0],[0]]
+    src_x, src_y : list of list of float, optional
+        One sublist per model.
+    internal_ref : list of [x,y] or None, optional
+        One per model.
+    external_coord : list of [x,y] or None, optional
+        One per model.
     """
     if node_ids is None and target_pos is None:
         raise ValueError("Provide node_ids or target_pos.")
-    if len(models) != len(node_ids if node_ids else target_pos):
+
+    n = len(models)
+
+    if len(node_ids if node_ids else target_pos) != n:
         raise ValueError("models and node_ids / target_pos must have the same length.")
 
-    sub_ids   = subfault if isinstance(subfault, (list, np.ndarray)) else [subfault]
-    n         = len(models)
-    nids_list = node_ids  if node_ids   else [None] * n
-    tpos_list = target_pos if target_pos else [None] * n
+    nids_list  = node_ids   if node_ids   else [None] * n
+    tpos_list  = target_pos if target_pos else [None] * n
+
+    # Normalize per-model optional lists — default to None per model
+    def _norm(val): return val if val is not None else [None] * n
+
+    ffsp_list   = _norm(ffsp_source)
+    str_list    = _norm(strikes)
+    dip_list    = _norm(dips)
+    rak_list    = _norm(rakes)
+    srcx_list   = _norm(src_x)
+    srcy_list   = _norm(src_y)
+    iref_list   = _norm(internal_ref)
+    ecoord_list = _norm(external_coord)
+
+    sub_ids = subfault if isinstance(subfault, (list, np.ndarray)) else [subfault]
 
     fig, axes = plt.subplots(3, 1, figsize=figsize)
 
-    for obj, nids, tpos in zip(models, nids_list, tpos_list):
-        if not obj._gf_loaded:
+    for obj, nids, tpos, ffsp, st, di, ra, sx, sy, iref, ecoord in zip(
+            models, nids_list, tpos_list,
+            ffsp_list, str_list, dip_list, rak_list,
+            srcx_list, srcy_list, iref_list, ecoord_list):
+
+        if not obj._has_gf or not obj._has_map:
             print(f"  Warning: {obj.model_name} has no GFs loaded — skipped.")
             continue
 
-        # Resolve node IDs
         if tpos is not None:
             nids = obj._collect_node_ids(target_pos=tpos, print_info=True)
         elif nids is not None:
             nids = obj._collect_node_ids(node_id=nids, print_info=True)
 
+        use_physical = ffsp is not None or st is not None
+
+        # Coordinate offset for ffsp_source
+        offset_x = offset_y = 0.0
+        strike_rad_fault = 0.0
+        if ffsp is not None:
+            strike_rad_fault = np.radians(ffsp.params['strike'])
+            if iref is not None and ecoord is not None:
+                ref_x, ref_y = iref
+                ext_x, ext_y = ecoord
+                ref_x_rot    = ref_x * np.sin(strike_rad_fault) + ref_y * np.cos(strike_rad_fault)
+                ref_y_rot    = ref_x * np.cos(strike_rad_fault) - ref_y * np.sin(strike_rad_fault)
+                offset_x     = ext_x - ref_x_rot
+                offset_y     = ext_y - ref_y_rot
+
         for nid in nids:
+            nid_num   = obj._n_nodes if nid in ('QA', 'qa') else nid
+            nid_label = 'QA'        if nid in ('QA', 'qa') else f'N{nid}'
+
             if nid in ('QA', 'qa'):
-                nid_num   = obj._n_nodes
-                nid_label = 'QA'
+                rx, ry = obj.xyz_qa[0, 0], obj.xyz_qa[0, 1]
             else:
-                nid_num   = nid
-                nid_label = f'N{nid}'
+                rx, ry = obj.xyz[nid, 0], obj.xyz[nid, 1]
+
             for sid in sub_ids:
                 slot = obj._get_slot(nid_num, sid)
-                time = _get_gf_time(obj, slot)
-                lbl  = f'{obj.model_name} | {nid_label} | S{sid} | dt={obj.dt:.4f}s'
-                for ax, comp in zip(axes, ('z', 'e', 'n')):
-                    gf = obj.get_gf(nid, sid, comp) * factor
-                    ax.plot(time, gf, linewidth=1, label=lbl)
+
+                with h5py.File(obj._gf_h5_path, 'r') as f:
+                    tdata = f['tdata'][slot]
+                    t0    = float(f['t0'][slot]) if obj._t0_available else 0.0
+
+                time = np.arange(tdata.shape[0]) * obj._dt_orig + t0
+                lbl  = f'{obj.model_name} | {nid_label} | S{sid}'
+
+                if use_physical:
+                    if ffsp is not None:
+                        sf  = ffsp.subfaults
+                        pf  = np.radians(sf['strike'][sid])
+                        df  = np.radians(sf['dip'][sid])
+                        lf  = np.radians(sf['rake'][sid])
+                        sx_ = sf['x'][sid] / 1e3 * np.sin(strike_rad_fault) + offset_x
+                        sy_ = sf['y'][sid] / 1e3 * np.cos(strike_rad_fault) + offset_y
+                    else:
+                        pf  = np.radians(st[sid])
+                        df  = np.radians(di[sid])
+                        lf  = np.radians(ra[sid])
+                        sx_ = sx[sid]
+                        sy_ = sy[sid]
+
+                    p  = np.arctan2(ry - sy_, rx - sx_)
+
+                    f1 =  np.cos(lf)*np.cos(pf) + np.sin(lf)*np.cos(df)*np.sin(pf)
+                    f2 =  np.cos(lf)*np.sin(pf) - np.sin(lf)*np.cos(df)*np.cos(pf)
+                    f3 = -np.sin(lf)*np.sin(df)
+                    n1 = -np.sin(pf)*np.sin(df)
+                    n2 =  np.cos(pf)*np.sin(df)
+                    n3 = -np.cos(df)
+
+                    A   = (f1*n1 - f2*n2)*np.cos(2*p) + (f1*n2 + f2*n1)*np.sin(2*p)
+                    B   = (f1*n3 + f3*n1)*np.cos(p)   + (f2*n3 + f3*n2)*np.sin(p)
+                    C   = f3 * n3
+                    A_t = (f1*n1 - f2*n2)*np.sin(2*p) - (f1*n2 + f2*n1)*np.cos(2*p)
+                    B_t = (f1*n3 + f3*n1)*np.sin(p)   - (f2*n3 + f3*n2)*np.cos(p)
+
+                    z_gf =  tdata[:, 6]*A   + tdata[:, 3]*B   + tdata[:, 0]*C
+                    r_gf =  tdata[:, 7]*A   + tdata[:, 4]*B   + tdata[:, 1]*C
+                    t_gf =  tdata[:, 8]*A_t + tdata[:, 5]*B_t
+
+                    e_gf = (-r_gf*np.sin(p) - t_gf*np.cos(p)) * factor
+                    n_gf = (-r_gf*np.cos(p) + t_gf*np.sin(p)) * factor
+                    z_gf = z_gf * factor
+
+                    components = (z_gf, e_gf, n_gf)
+                else:
+                    components = (tdata[:, 0]*factor, tdata[:, 1]*factor, tdata[:, 2]*factor)
+
+                for ax, sig in zip(axes, components):
+                    ax.plot(time, sig, linewidth=1, label=lbl)
 
     comp_titles = ('Vertical (Z)', 'East (E)', 'North (N)')
-    for ax, comp in zip(axes, comp_titles):
-        ax.set_title(f'{comp} — Green Function', fontweight='bold')
+    for ax, title in zip(axes, comp_titles):
+        ax.set_title(f'{title} — Green Function', fontweight='bold')
         ax.set_xlabel('Time [s]')
         ax.set_ylabel('Amplitude')
         ax.grid(True, alpha=0.3)
@@ -379,11 +467,12 @@ def plot_models_tensor_gf(models,
                 time = _get_gf_time(obj, slot)
                 lbl  = f'{obj.model_name} | {nid_label} | S{sid}'
                 with h5py.File(obj._gf_h5_path, 'r') as f:
-                    tp = f'tdata_dict/{slot}_tdata'
-                    if tp not in f:
-                        print(f"  tdata not found: {tp} — skipped.")
-                        continue
-                    tdata = f[tp][:] * factor
+                    # tp = f'tdata_dict/{slot}_tdata'
+                    # if tp not in f:
+                    #     print(f"  tdata not found: {tp} — skipped.")
+                    #     continue
+                    # tdata = f[tp][:] * factor
+                    tdata = f['tdata'][slot] * factor
                 for j in range(9):
                     axes[j // 3, j % 3].plot(time, tdata[:, j],
                                               linewidth=0.8, label=lbl)
