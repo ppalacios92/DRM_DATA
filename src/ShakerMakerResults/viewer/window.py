@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from ._imports import require_viewer_dependencies
 from .controls import HeaderBar, StatusChipBar, TimeControls
 from .scene import ViewerScene
@@ -69,8 +71,11 @@ class ViewerMainWindow(QtWidgets.QMainWindow):
         root.addWidget(self.time_controls)
 
         self._play_timer = QtCore.QTimer(self)
-        self._play_timer.setInterval(80)
+        self._play_timer.setInterval(16)
         self._play_timer.timeout.connect(self._advance_playback)
+        self._playback_last_tick = None
+        self._playback_frame_accumulator = 0.0
+        self._last_trace_refresh_at = 0.0
 
         self.scene = ViewerScene(self.plotter, session)
         self.scene.build()
@@ -85,11 +90,18 @@ class ViewerMainWindow(QtWidgets.QMainWindow):
     def on_session_updated(self, reason: str):
         self.header.sync_from_state()
         self.time_controls.sync_from_state()
-        self.properties_panel.refresh(reason)
+        if reason not in {"time", "playback"}:
+            self.properties_panel.refresh(reason)
 
         if reason == "time":
             self.scene.refresh_scalars(render=False)
-            self.trace_panel.refresh("time")
+            if self.session.state.is_playing:
+                now = time.perf_counter()
+                if (now - self._last_trace_refresh_at) >= 0.12:
+                    self.trace_panel.refresh("time")
+                    self._last_trace_refresh_at = now
+            else:
+                self.trace_panel.refresh("time")
             self.spectrum_panel.refresh("time")
             self.arias_panel.refresh("time")
         elif reason == "selection":
@@ -144,10 +156,15 @@ class ViewerMainWindow(QtWidgets.QMainWindow):
 
     def _sync_play_state(self):
         if self.session.state.is_playing:
+            self._playback_last_tick = time.perf_counter()
+            self._playback_frame_accumulator = 0.0
+            self._last_trace_refresh_at = 0.0
             self._play_timer.setInterval(self._play_interval_ms())
             self._play_timer.start()
         else:
             self._play_timer.stop()
+            self._playback_last_tick = None
+            self._playback_frame_accumulator = 0.0
         self.time_controls.sync_from_state()
         self._update_status()
 
@@ -158,7 +175,25 @@ class ViewerMainWindow(QtWidgets.QMainWindow):
             self._sync_play_state()
             self.toolbar.write_frame_if_recording()   # flush last frame then stop
             return
-        self.session.step_time(1)
+        now = time.perf_counter()
+        last_tick = self._playback_last_tick
+        self._playback_last_tick = now
+        if last_tick is None:
+            return
+
+        elapsed_s = max(0.0, now - last_tick)
+        base_frame_s = max(self._base_frame_duration_s(), 1.0e-6)
+        speed = max(float(self.session.state.playback_speed), 0.1)
+        self._playback_frame_accumulator += (elapsed_s * speed) / base_frame_s
+
+        frames_to_advance = int(self._playback_frame_accumulator)
+        if frames_to_advance <= 0:
+            return
+
+        self._playback_frame_accumulator -= frames_to_advance
+        remaining = max_index - self.session.state.time_index
+        step = max(1, min(frames_to_advance, remaining))
+        self.session.step_time(step)
         # step_time → on_session_updated → plotter.render() fires synchronously,
         # so the frame is already rendered when we capture it here.
         self.toolbar.write_frame_if_recording()
@@ -183,6 +218,8 @@ class ViewerMainWindow(QtWidgets.QMainWindow):
         return f"cache {mb:.1f} MB"
 
     def _play_interval_ms(self) -> int:
-        speed = max(float(self.session.state.playback_speed), 0.1)
-        base_ms = 80.0
-        return max(10, int(round(base_ms / speed)))
+        return 16
+
+    @staticmethod
+    def _base_frame_duration_s() -> float:
+        return 0.08

@@ -100,3 +100,45 @@ def _get_name(obj):
     if _is_station(obj):
         return obj.name if obj.name else "Station"
     return obj.model_name
+
+
+def _fk_tensor_rotation(gf_tensor, strike, dip, rake, azimuth):
+    """Rotate a 9-component FK tensor into physical Z/E/N components.
+
+    Parameters
+    ----------
+    gf_tensor : np.ndarray
+        Array of shape ``(nt, 9)`` ordered as stored in the GF database.
+    strike, dip, rake, azimuth : float
+        Angles in radians.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        Rotated ``(z, e, n)`` time histories.
+    """
+    pf = strike
+    df = dip
+    lf = rake
+    p = azimuth
+
+    f1 = np.cos(lf) * np.cos(pf) + np.sin(lf) * np.cos(df) * np.sin(pf)
+    f2 = np.cos(lf) * np.sin(pf) - np.sin(lf) * np.cos(df) * np.cos(pf)
+    f3 = -np.sin(lf) * np.sin(df)
+    n1 = -np.sin(pf) * np.sin(df)
+    n2 = np.cos(pf) * np.sin(df)
+    n3 = -np.cos(df)
+
+    a = (f1 * n1 - f2 * n2) * np.cos(2 * p) + (f1 * n2 + f2 * n1) * np.sin(2 * p)
+    b = (f1 * n3 + f3 * n1) * np.cos(p) + (f2 * n3 + f3 * n2) * np.sin(p)
+    c = f3 * n3
+    a_t = (f1 * n1 - f2 * n2) * np.sin(2 * p) - (f1 * n2 + f2 * n1) * np.cos(2 * p)
+    b_t = (f1 * n3 + f3 * n1) * np.sin(p) - (f2 * n3 + f3 * n2) * np.cos(p)
+
+    z_gf = gf_tensor[:, 6] * a + gf_tensor[:, 3] * b + gf_tensor[:, 0] * c
+    r_gf = gf_tensor[:, 7] * a + gf_tensor[:, 4] * b + gf_tensor[:, 1] * c
+    t_gf = gf_tensor[:, 8] * a_t + gf_tensor[:, 5] * b_t
+
+    e_gf = -r_gf * np.sin(p) - t_gf * np.cos(p)
+    n_gf = -r_gf * np.cos(p) + t_gf * np.sin(p)
+    return z_gf, e_gf, n_gf

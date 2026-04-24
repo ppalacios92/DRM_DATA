@@ -10,7 +10,7 @@ summary to stdout.
 """
 
 import numpy as np
-from .newmark import NewmarkSpectrumAnalyzer
+from .analysis.newmark import NewmarkSpectrumAnalyzer
 from .utils import _is_station, _resolve_node, _get_signals, _get_time, _get_name
 
 # ---------------------------------------------------------------------------
