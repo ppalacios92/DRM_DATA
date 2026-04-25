@@ -198,7 +198,7 @@ class ViewerScene:
             self.plotter.add_text(
                 "\n".join(lines),
                 position="upper_left",
-                font_size=9,
+                font_size=8,
                 color="#555555",
                 shadow=False,
                 name="branding",

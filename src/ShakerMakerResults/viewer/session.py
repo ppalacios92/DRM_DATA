@@ -336,15 +336,7 @@ class ViewerSession:
             # Pre-warm the series cache so every playback frame is a pure
             # memory slice with zero HDF5 I/O.
             try:
-                if self.state.component == "resultant":
-                    # Cache E, N, Z individually — one contiguous column read
-                    # each vs. strided reads.  The resultant fast-path in
-                    # scalar_snapshot derives the magnitude from these three
-                    # series with no additional I/O.
-                    for comp in ("e", "n", "z"):
-                        self.adapter.scalar_series(self.state.demand, comp)
-                else:
-                    self.adapter.scalar_series(self.state.demand, self.state.component)
+                self.adapter.scalar_series(self.state.demand, self.state.component)
             except Exception:
                 pass  # Large files may exceed cache budget — degrade gracefully
             # Also pre-warm displacement series when warp is active.

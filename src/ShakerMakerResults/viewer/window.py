@@ -6,15 +6,24 @@ import time
 
 from ._imports import require_viewer_dependencies
 from .controls import HeaderBar, StatusChipBar, TimeControls
-from .scene import ViewerScene
+from .multi_view import MultiViewArea
+from .side_panel import ViewerSidePanel
 from .toolbar import ViewerToolBar
-from .trace_panel import AriasIntensityPanel, SpectrumPanel, TracePanel, ViewerPropertiesPanel
 
-_, QtInteractor, _, QtCore, QtGui, QtWidgets = require_viewer_dependencies()
+_, _, _, QtCore, QtGui, QtWidgets = require_viewer_dependencies()
 
 
 class ViewerMainWindow(QtWidgets.QMainWindow):
-    """Thin Qt shell around the plotter, properties, analysis tabs, and transport controls."""
+    """Thin Qt shell that wires together the multi-view area, side panel and
+    transport controls around a single shared :class:`~.session.ViewerSession`.
+
+    All session state (time, demand, component, warp, selection …) is global.
+    ``on_session_updated(reason)`` fans the update out to:
+
+    * ``multi_view``  — refreshes every visible 3-D viewport.
+    * ``side_panel``  — routes to the active nav page (lazy heavy pages are
+                        skipped when inactive).
+    """
 
     def __init__(self, session):
         super().__init__()
@@ -31,121 +40,69 @@ class ViewerMainWindow(QtWidgets.QMainWindow):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
 
+        # ── Header ────────────────────────────────────────────────────────────
         self.header = HeaderBar(session)
         root.addWidget(self.header)
 
+        # ── Toolbar ───────────────────────────────────────────────────────────
+        # Built before multi_view is added to the splitter so it sits above.
+        # Deferred addWidget call happens after multi_view is constructed.
+
+        # ── Main splitter: multi-view | side panel ────────────────────────────
         splitter = QtWidgets.QSplitter()
         splitter.setChildrenCollapsible(False)
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 1)
 
-        self.plotter = QtInteractor(self)
-        splitter.addWidget(self.plotter.interactor)
+        self.multi_view = MultiViewArea(session)
+        splitter.addWidget(self.multi_view)
 
-        # Toolbar is created after plotter (needs the interactor reference)
-        self.toolbar = ViewerToolBar(self.plotter, self)
+        self.toolbar = ViewerToolBar(self.multi_view, self)
         root.addWidget(self.toolbar)
 
-        right_panel = QtWidgets.QSplitter(QtCore.Qt.Vertical)
-        right_panel.setChildrenCollapsible(False)
-
-        self.properties_panel = ViewerPropertiesPanel(session)
-        right_panel.addWidget(self.properties_panel)
-
-        self.analysis_tabs = QtWidgets.QTabWidget()
-        self.trace_panel = TracePanel(session)
-        self.spectrum_panel = SpectrumPanel(session)
-        self.arias_panel = AriasIntensityPanel(session)
-        self.analysis_tabs.addTab(self.trace_panel, "Traces")
-        self.analysis_tabs.addTab(self.spectrum_panel, "Spectrum")
-        self.analysis_tabs.addTab(self.arias_panel, "Arias Intensity")
-        right_panel.addWidget(self.analysis_tabs)
-        right_panel.setSizes([420, 460])
-
-        splitter.addWidget(right_panel)
+        self.side_panel = ViewerSidePanel(session)
+        splitter.addWidget(self.side_panel)
         splitter.setSizes([1240, 360])
 
         root.addWidget(splitter, 1)
 
+        # ── Transport controls ────────────────────────────────────────────────
         self.time_controls = TimeControls(session, on_play_toggled=self._on_play_toggled)
         root.addWidget(self.time_controls)
 
+        # ── Playback timer ────────────────────────────────────────────────────
         self._play_timer = QtCore.QTimer(self)
         self._play_timer.setInterval(16)
         self._play_timer.timeout.connect(self._advance_playback)
-        self._playback_last_tick = None
-        self._playback_frame_accumulator = 0.0
-        self._last_trace_refresh_at = 0.0
+        self._playback_last_tick: float | None = None
+        self._playback_frame_accumulator: float = 0.0
 
-        self.scene = ViewerScene(self.plotter, session)
-        self.scene.build()
-
+        # ── Status bar ────────────────────────────────────────────────────────
         self.status_chip_bar = StatusChipBar()
         self.statusBar().addPermanentWidget(self.status_chip_bar, 1)
         self._update_status()
 
+        # ── Keyboard shortcut ─────────────────────────────────────────────────
         self._space_shortcut = QtGui.QShortcut(QtGui.QKeySequence("Space"), self)
         self._space_shortcut.activated.connect(self._toggle_play_shortcut)
 
+    # ── Session update routing ────────────────────────────────────────────────
+
     def on_session_updated(self, reason: str):
+        """Fan a state-change reason out to every affected sub-widget."""
         self.header.sync_from_state()
         self.time_controls.sync_from_state()
-        if reason not in {"time", "playback"}:
-            self.properties_panel.refresh(reason)
 
-        if reason == "time":
-            self.scene.refresh_scalars(render=False)
-            if self.session.state.is_playing:
-                now = time.perf_counter()
-                if (now - self._last_trace_refresh_at) >= 0.12:
-                    self.trace_panel.refresh("time")
-                    self._last_trace_refresh_at = now
-            else:
-                self.trace_panel.refresh("time")
-            self.spectrum_panel.refresh("time")
-            self.arias_panel.refresh("time")
-        elif reason == "selection":
-            self.scene.refresh_selection(render=False)
-            self.trace_panel.refresh("selection")
-            self.spectrum_panel.refresh("selection")
-            self.arias_panel.refresh("selection")
-        elif reason in {"demand", "component"}:
-            self.scene.rebuild_scalar_actor(render=False)
-            self.scene.refresh_selection(render=False)
-            self.trace_panel.refresh("demand")
-            self.spectrum_panel.refresh("demand")
-            self.arias_panel.refresh("demand")
-        elif reason == "visibility":
-            self.scene.rebuild_for_visibility(render=False)
-            self.trace_panel.refresh("full")
-            self.spectrum_panel.refresh("full")
-            self.arias_panel.refresh("full")
-        elif reason == "color_range":
-            self.scene.apply_color_range(render=False)
-            self.trace_panel.refresh("full")
-            self.spectrum_panel.refresh("full")
-            self.arias_panel.refresh("full")
-        elif reason == "appearance":
-            self.scene.apply_appearance(render=False)
-            self.scene.refresh_selection(render=False)
-            self.trace_panel.refresh("full")
-            self.spectrum_panel.refresh("full")
-            self.arias_panel.refresh("full")
-        elif reason == "playback":
+        if reason == "playback":
             self._sync_play_state()
-        elif reason == "warp":
-            self.scene.rebuild_scalar_actor(render=False)
-            self.scene.refresh_selection(render=False)
-            self.properties_panel.refresh("warp")
+            self.side_panel.refresh("playback")
         else:
-            self.scene.rebuild_scalar_actor(render=False)
-            self.scene.refresh_selection(render=False)
-            self.trace_panel.refresh("full")
-            self.spectrum_panel.refresh("full")
-            self.arias_panel.refresh("full")
+            self.multi_view.on_session_updated(reason)
+            self.side_panel.refresh(reason)
 
         self._update_status()
-        self.plotter.render()
+
+    # ── Playback ──────────────────────────────────────────────────────────────
 
     def _toggle_play_shortcut(self):
         self.session.toggle_playing()
@@ -158,7 +115,6 @@ class ViewerMainWindow(QtWidgets.QMainWindow):
         if self.session.state.is_playing:
             self._playback_last_tick = time.perf_counter()
             self._playback_frame_accumulator = 0.0
-            self._last_trace_refresh_at = 0.0
             self._play_timer.setInterval(self._play_interval_ms())
             self._play_timer.start()
         else:
@@ -173,8 +129,9 @@ class ViewerMainWindow(QtWidgets.QMainWindow):
         if self.session.state.time_index >= max_index:
             self.session.set_playing(False)
             self._sync_play_state()
-            self.toolbar.write_frame_if_recording()   # flush last frame then stop
+            self.toolbar.write_frame_if_recording()
             return
+
         now = time.perf_counter()
         last_tick = self._playback_last_tick
         self._playback_last_tick = now
@@ -193,10 +150,12 @@ class ViewerMainWindow(QtWidgets.QMainWindow):
         self._playback_frame_accumulator -= frames_to_advance
         remaining = max_index - self.session.state.time_index
         step = max(1, min(frames_to_advance, remaining))
+        # step_time fires on_session_updated("time") → multi_view renders each
+        # pane, side_panel throttles the active trace cursor update.
         self.session.step_time(step)
-        # step_time → on_session_updated → plotter.render() fires synchronously,
-        # so the frame is already rendered when we capture it here.
         self.toolbar.write_frame_if_recording()
+
+    # ── Status bar ────────────────────────────────────────────────────────────
 
     def _update_status(self):
         selected = self.session.state.selected_node
@@ -217,7 +176,8 @@ class ViewerMainWindow(QtWidgets.QMainWindow):
         mb = info["bytes"] / (1024 * 1024)
         return f"cache {mb:.1f} MB"
 
-    def _play_interval_ms(self) -> int:
+    @staticmethod
+    def _play_interval_ms() -> int:
         return 16
 
     @staticmethod
