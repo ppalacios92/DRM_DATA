@@ -97,3 +97,17 @@ def __getattr__(name):
 
 def __dir__():
     return sorted(set(globals()) | set(__all__))
+
+print("""
+  ShakerMakerResults -- Visualization and Analysis Toolkit
+  Built on top of Shakermaker Tool
+
+  Version 1.0.0                        (c) 2026 All Rights Reserved
+
+  Repository  :  https://github.com/ppalacios92/ShakerMakerResults
+  ShakerMaker :  https://github.com/ppalacios92/ShakerMaker
+
+  Patricio Palacios B.    |    Ladruno Team
+  
+  ********* (>'-')> Ladruno4ever  *********
+""")

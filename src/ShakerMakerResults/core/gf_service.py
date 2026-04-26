@@ -9,11 +9,13 @@ from scipy.interpolate import interp1d
 
 def load_gf_database(model, h5_path):
     """Load GF file in OP format."""
+    # sep = "--" * 50
     model._gf_h5_path = h5_path
 
     with h5py.File(h5_path, "r") as f:
         if "tdata" not in f:
             raise ValueError("Unsupported GF format: expected dataset 'tdata'")
+
         model._tdata_shape = f["tdata"].shape
         model._nt_gf = model._tdata_shape[1]
         model._t0_available = "t0" in f
@@ -38,13 +40,26 @@ def load_gf_database(model, h5_path):
         model._n_time_gf = int(gf_mask.sum())
 
     model._has_gf = True
-    print(f"  GF loaded: {model._tdata_shape[0]} slots, nt={model._nt_gf}")
-    print(f"  t0 available: {model._t0_available}")
-    print("  Map status: not loaded yet (subfault count unavailable)")
+
+    gf_slots = int(model._tdata_shape[0])
+    gf_steps = int(model._nt_gf)
+    gf_components = int(model._tdata_shape[2]) if len(model._tdata_shape) > 2 else None
+
+    print( "--" * 50)
+    print(f"Green Functions : {h5_path}")
+    print(f"  Shape    : {model._tdata_shape}")
+    print(f"  GF       : steps={gf_steps}  |  slots={gf_slots}")
+    if gf_components is not None:
+        print(f"  Tensor   : components={gf_components}")
+    print(f"  Time     : dt={model._dt_orig}s  |  t=[{full_gf_time[0]:.3f}, {full_gf_time[-1]:.3f}]s")
+    print(f"  t0       : {'yes' if model._t0_available else 'no'}")
+    print(f"  Map      : not loaded yet (subfault count unavailable)")
+    print( "--" * 50 + "\n")
 
 
 def load_map(model, h5_path):
     """Load mapping file in OP format."""
+    # sep = "--" * 50
     model._gf_map_h5_path = h5_path
 
     with h5py.File(h5_path, "r") as f:
@@ -62,11 +77,18 @@ def load_map(model, h5_path):
     model._has_map = True
     model._use_pair_to_slot = True
     model._gf_loaded = True
-    # TODO: Keep this message tied to map semantics, not GF slot semantics.
-    print(
-        f"  Map loaded: subfaults={model._nsources_db}, "
-        f"pairs={len(model._pair_to_slot)}, unique geometry slots={len(model._pairs_to_compute)}"
-    )
+
+    n_pairs = len(model._pair_to_slot)
+    n_slots = len(model._pairs_to_compute)
+    reduction = 100.0 * (1.0 - n_slots / n_pairs) if n_pairs > 0 else 0.0
+
+    print("--" * 50)
+    print(f"GF Map   : {h5_path}")
+    print(f"  Format : OP")
+    print(f"  Map    : subfaults={model._nsources_db}  |  pairs={n_pairs}  |  slots={n_slots}")
+    print(f"  Reduce : {reduction:.2f}% fewer GF evaluations")
+    print(f"  Tol      _delta_h={model._delta_h}  |  delta_v_src={model._delta_v_src}  |  delta_v_rec={model._delta_v_rec}")
+    print("--" * 50 + "\n")
 
 
 def _resolve_gf_slot(model, node_id, subfault_id):

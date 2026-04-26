@@ -84,9 +84,9 @@ class ShakerMakerData:
             n_nodes     = len(self.xyz)
             n_time_data = f[f'{data_grp}/velocity'].shape[1]
 
-            self.freqs = None
-            if 'GF_Spectrum/sta_0/sub_0/freqs' in f:
-                self.freqs = f['GF_Spectrum/sta_0/sub_0/freqs'][:]
+            # self.freqs = None
+            # if 'GF_Spectrum/sta_0/sub_0/freqs' in f:
+            #     self.freqs = f['GF_Spectrum/sta_0/sub_0/freqs'][:]
 
             # Detect GF time steps — OP format first, then legacy
             n_subfaults = 0; n_time_gf = 0
@@ -102,13 +102,19 @@ class ShakerMakerData:
         self.xyz_all = np.vstack([self.xyz, self.xyz_qa]) if self.xyz_qa is not None else self.xyz
 
         xyz_t = _rotate(self.xyz)
-        # h_x = np.diff(np.sort(np.unique(np.round(xyz_t[:, 0], 6))))[0]
-        # h_y = np.diff(np.sort(np.unique(np.round(xyz_t[:, 1], 6))))[0]
-        # h_z = np.diff(np.sort(np.unique(np.round(xyz_t[:, 2], 6))))[0]
-        def _spacing(arr): d = np.diff(np.sort(np.unique(np.round(arr, 6)))); return float(d[0]) if len(d) > 0 else 0.0
+
+        # determinate spacing of the grid
+        def _spacing(arr): 
+            d = np.diff(np.sort(np.unique(np.round(arr, 6))))
+            if len(d) > 0:
+                return float(d[0])
+            else:
+                return 0.0
+
         h_x = _spacing(xyz_t[:, 0])
         h_y = _spacing(xyz_t[:, 1])
         h_z = _spacing(xyz_t[:, 2])
+
         self.spacing    = (h_x, h_y, h_z)
         self.model_name = f"{h_x:.1f}m"
 
@@ -118,13 +124,15 @@ class ShakerMakerData:
         self._data_grp   = data_grp; self._meta_grp   = meta_grp
         self._qa_grp     = qa_grp
 
-        self._node_cache = {}; self._gf_cache = {}; self._spectrum_cache = {}
+        self._node_cache = {}
+        self._gf_cache = {}
+        self._spectrum_cache = {}
 
-        # --- NEW: GF + MAP paths ---
+        # GF + MAP paths 
         self._gf_h5_path = None
         self._gf_map_h5_path = None
 
-        # --- NEW: flags ---
+        # flags
         self._has_gf = False
         self._has_map = False
 
@@ -191,7 +199,7 @@ class ShakerMakerData:
                 print(f"  vmax cache loaded from sidecar.")
             except Exception:
                 self._vmax = None   # corrupted cache — recompute on demand
-        sep = '--' * 50
+        # sep = '--' * 50
         is_surface = self.is_drm and not np.any(self.internal)
         type_str   = 'SurfaceGrid' if is_surface else ('DRM' if self.is_drm else 'Station')
 
@@ -200,7 +208,7 @@ class ShakerMakerData:
         Ly = xyz_t_print[:,1].max() - xyz_t_print[:,1].min()
         Lz = xyz_t_print[:,2].max() - xyz_t_print[:,2].min()
 
-        print(sep)
+        print('--' * 50)
         print(f"ShakerMakerData  :  {filename}")
         print(f"  Type     : {type_str}")
         print(f"  Model    : {self.model_name}  |  Spacing: {h_x:.1f}m x {h_y:.1f}m x {h_z:.1f}m")
@@ -255,7 +263,7 @@ class ShakerMakerData:
             print(f"  WARNING  : File data ({_total_data_bytes/1e9:.1f} GB) exceeds "
                   f"50% of available RAM ({_mem_available/1e9:.1f} GB). "
                   f"Surface methods will use safe chunk mode automatically.")
-        print(sep + '\n')
+        print('--' * 50 + '\n')
 
     # ------------------------------------------------------------------
     # GF database — OP pipeline
@@ -317,33 +325,10 @@ class ShakerMakerData:
                 print("  GF mapping loaded (legacy Node_Mapping).")
 
 
-
-
-
-
-
-    # def _compute_vmax(self):
-    #     import json
-    #     print(f"  Computing vmax (hardcoded)...")
-    #     vmax = {
-    #         'accel': {'e': 10.0, 'n': 10.0, 'z': 10.0, 'resultant': 10.0},
-    #         'vel':   {'e': 10.0, 'n': 10.0, 'z': 10.0, 'resultant': 10.0},
-    #         'disp':  {'e': 10.0, 'n': 10.0, 'z': 10.0, 'resultant': 10.0},
-    #     }
-    #     self._vmax = vmax
-    #     try:
-    #         with open(self._vmax_cache_path, 'w') as cf:
-    #             json.dump(vmax, cf)
-    #         print(f"  vmax cached to: {self._vmax_cache_path}")
-    #     except Exception as e:
-    #         print(f"  vmax cache write failed: {e}")
-
-
     def _compute_vmax(self):
         from ..analysis.vmax_service import compute_vmax
 
         return compute_vmax(self)
-
 
 
 
@@ -390,14 +375,6 @@ class ShakerMakerData:
 
 
 
-
-
-
-
-
-
-
-
     def viewer(self, show=True, **kwargs):
         """Open an interactive viewer session for this model.
 
@@ -418,13 +395,6 @@ class ShakerMakerData:
         from ..viewer import ViewerSession
 
         return ViewerSession(self, show=show, **kwargs)
-
-    # ------------------------------------------------------------------
-    # Windowing / resampling
-    # ------------------------------------------------------------------
-
-
-
 
 
     # ------------------------------------------------------------------
@@ -485,21 +455,6 @@ class ShakerMakerData:
                 if i in comp_donors:
                     ax.text(x,y,z,str(i),fontsize=8,color=col)
 
-    # def _collect_node_ids(self, node_id, target_pos):
-    #     if node_id is not None:
-    #         if isinstance(node_id, (list, np.ndarray)):
-    #             return node_id
-    #         # Manejar 'QA' como caso especial
-    #         if node_id in ('QA', 'qa'):
-    #             return ['QA']
-    #         return [node_id]
-    #     if target_pos is not None:
-    #         dist = np.linalg.norm(self.xyz_all - np.asarray(target_pos), axis=1)
-    #         idx = int(np.argmin(dist))
-    #         print(f"Nearest node: {idx}  distance={dist[idx]:.6f} km")
-    #         return [idx]
-    #     raise ValueError("Provide node_id or target_pos.")
-
     def _collect_node_ids(self, node_id=None, target_pos=None, print_info=True):
         """Resolve node IDs from node_id or target_pos and optionally print info.
         
@@ -537,8 +492,8 @@ class ShakerMakerData:
             raise ValueError("Provide node_id or target_pos.")
         
         if print_info:
-            sep = '-' * 50
-            print(sep)
+            # sep = '-' * 50
+            print('-' * 50)
             print("NODE INFO")
             for nid in nids:
                 if nid in ('QA', 'qa'):
@@ -569,7 +524,7 @@ class ShakerMakerData:
                         pos = self.xyz[nid]
                     dist = np.linalg.norm(pos - target) * 1000  # a metros
                     print(f"  Target   │ pos = [{target[0]*1000:>10.2f}, {target[1]*1000:>10.2f}, {target[2]*1000:>10.2f}] m │ dist = {dist:.2f} m")
-            print(sep)
+            print('-' * 50)
         
         return nids
 
@@ -632,72 +587,6 @@ class ShakerMakerData:
         Ai, Bi = np.meshgrid(ai, bi)
         Zi = griddata((a, b), mag, (Ai, Bi), method=method)
         return Ai, Bi, Zi, albl, blbl
-
-
-
-    # ------------------------------------------------------------------
-    # Plotting — single-object methods
-    # ------------------------------------------------------------------
-
-
-
-
-
-
-
-    
-
-    
-
-
-
-
-
-
-
-
-    # ------------------------------------------------------------------
-    # Surface / animation methods  (primarily for SurfaceGrid outputs)
-    # ------------------------------------------------------------------
-    
-
-
-
-
-
-
-# -------------------------
-
-
-
-
-
-#### PLOT SURFACES WITH PARALLEL POOL
-
-
-
-
-
-
-    
-    
-    
-    
-
-
-
-
-
-# # ---------------------------------------------------------------------------
-# # Semantic aliases
-# # ---------------------------------------------------------------------------
-# DRMData     = ShakerMakerData   # DRMBox / PointCloudDRMReceiver
-# SurfaceData = ShakerMakerData   # SurfaceGrid
-
-
-    
-    
-    
 
     # ------------------------------------------------------------------
     # Delegated public API
@@ -836,4 +725,3 @@ class ShakerMakerData:
 
 DRMData = ShakerMakerData
 SurfaceData = ShakerMakerData
-

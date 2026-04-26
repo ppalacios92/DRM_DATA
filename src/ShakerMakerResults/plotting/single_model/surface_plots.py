@@ -173,24 +173,32 @@ def plot_surface_newmark(self,
 
         if use_safe_mode:
             def _compute_spectrum(i):
-                with h5py.File(_filename, 'r') as _f:
+                # Local imports — each loky worker process starts fresh,
+                # so every symbol used here must be imported inside the function.
+                from scipy.interpolate import interp1d as _interp1d
+                from ShakerMakerResults.analysis.newmark import (
+                    NewmarkSpectrumAnalyzer as _NSA,
+                )
+                import h5py as _h5py
+                import numpy as _np
+
+                with _h5py.File(_filename, 'r') as _f:
                     _d = _f[_hdf5_path][3*i : 3*i+3, :]
                 _d = _d[[2, 0, 1], :]
                 if _window_mask is not None:
                     _d = _d[:, _window_mask]
                 elif _resample_cache is not None:
                     _t_orig = _resample_cache['time_orig']
-                    _rs = np.zeros((3, _time_len))
+                    _rs = _np.zeros((3, _time_len))
                     for _k in range(3):
-                        _rs[_k] = interp1d(_t_orig, _d[_k],
-                                           kind='linear',
-                                           fill_value='extrapolate')(
-                            np.linspace(_t_orig[0], _t_orig[-1], _time_len))
+                        _rs[_k] = _interp1d(_t_orig, _d[_k],
+                                            kind='linear',
+                                            fill_value='extrapolate')(
+                            _np.linspace(_t_orig[0], _t_orig[-1], _time_len))
                     _d = _rs
-                specs = [NewmarkSpectrumAnalyzer.compute(_d[k], dt)
-                         for k in range(3)]
+                specs = [_NSA.compute(_d[k], dt) for k in range(3)]
                 T  = specs[0]['T']
-                sa = {qty: np.array([sp[qty] for sp in specs])
+                sa = {qty: _np.array([sp[qty] for sp in specs])
                       for qty in ('PSa', 'Sa', 'PSv', 'Sv', 'Sd')}
                 return T, sa
         else:
@@ -201,11 +209,16 @@ def plot_surface_newmark(self,
             print("  Data loaded. Computing spectra...")
 
             def _compute_spectrum(i):
-                data  = all_data[i]
-                specs = [NewmarkSpectrumAnalyzer.compute(data[k], dt)
-                         for k in range(3)]
+                # Local import — needed in every worker process spawned by loky.
+                from ShakerMakerResults.analysis.newmark import (
+                    NewmarkSpectrumAnalyzer as _NSA,
+                )
+                import numpy as _np
+
+                _data = all_data[i]
+                specs = [_NSA.compute(_data[k], dt) for k in range(3)]
                 T  = specs[0]['T']
-                sa = {qty: np.array([sp[qty] for sp in specs])
+                sa = {qty: _np.array([sp[qty] for sp in specs])
                       for qty in ('PSa', 'Sa', 'PSv', 'Sv', 'Sd')}
                 return T, sa
 

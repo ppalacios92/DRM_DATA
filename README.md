@@ -2,7 +2,7 @@
 
 `ShakerMakerResults` is a Python package for reading, querying, plotting, comparing, and interactively visualizing HDF5 results produced by **ShakerMaker**.
 
-This project is a **results reader and visualization toolkit**. It does **not** generate `.h5drm` files or Green Function databases. Those files must come from a ShakerMaker workflow associated with the work of **Jose A. Abell** and collaborators.
+This project is a **results reader and visualization toolkit**. It does **not** generate `.h5drm` files or Green Function databases. Those files must come from a ShakerMaker workflow associated with the work of **Prof. Jose Abell** and collaborators.
 
 The package is designed to work with:
 - DRM-style HDF5 results (`.h5drm`)
@@ -13,7 +13,7 @@ The package is designed to work with:
 
 ## What This Package Does
 
-- Reads ShakerMaker HDF5 outputs into a single `ShakerMakerData` object
+- Reads **ShakerMaker** HDF5 outputs into a single `ShakerMakerData` object
 - Queries node histories, QA histories, surface snapshots, and Green Functions
 - Creates time-windowed and resampled derived models
 - Produces domain, node, surface, spectral, Arias, GF, and animation plots
@@ -38,6 +38,8 @@ To install the optional interactive viewer:
 pip install -e .[viewer]
 ```
 
+(pyvista, vtk, pyvistaqt, qtpy dependencies)
+
 ### Core dependencies
 
 Installed by default:
@@ -53,6 +55,7 @@ Installed by default:
 Some features rely on additional tools outside the base dependency set:
 - `ffmpeg` for video export
 - `EarthquakeSignal` for Arias intensity routines
+Repo: https://github.com/ppalacios92/EarthquakeSignal
 - `folium` and geospatial utilities for map-based plotting
 
 ---
@@ -155,7 +158,6 @@ vel_qa = model.get_qa_data(data_type="vel")
 
 gf_z = model.get_gf(node_id=10, subfault_id=0, component="z")
 
-snapshot = model.get_surface_snapshot(time_idx=100, component="z", data_type="vel")
 ```
 
 ### Export
@@ -163,6 +165,7 @@ snapshot = model.get_surface_snapshot(time_idx=100, component="z", data_type="ve
 ```python
 model.write_h5drm(name="exported_case")
 ```
+Still working on it!
 
 ---
 
@@ -184,27 +187,19 @@ model_window.plot_domain(
 )
 ```
 
+| <img src="docs/images/domain.png" width="500"/> |
+|:---:|
+
 `plot_domain_calculated_t0`: Plot the full domain colored by GF `t0` for a selected subfault.
 
 ```python
 model_window.plot_domain_calculated_t0(
     subfault=0,
     xyz_origin=None,
-    label_nodes=False,
-    show_calculated=False,
+    show_calculated_only=False,
     figsize=(8, 6),
-    axis_equal=False,
+    axis_equal=True,
     cmap="viridis",
-)
-```
-
-`plot_calculated_vs_reused`: Show which nodes were directly computed and which reuse GF slots.
-
-```python
-model_window.plot_calculated_vs_reused(
-    db_filename=None,
-    xyz_origin=None,
-    label_nodes=False,
 )
 ```
 
@@ -356,25 +351,6 @@ model_window.plot_surface_arias(
 )
 ```
 
-### Map methods
-
-`plot_surface_on_map`: Overlay one snapshot on an existing Folium map.
-
-```python
-model_window.plot_surface_on_map(
-    mapa=map_object,
-    time=0.0,
-    component="resultant",
-    data_type="vel",
-    factor=1,
-    cmap="RdBu_r",
-    thresh_pct=0.01,
-    radius=3,
-    fill_opacity=0.85,
-    crs_utm="EPSG:32719",
-)
-```
-
 ### Animation methods
 
 `create_animation`: Create a full-domain 3D animation.
@@ -429,32 +405,6 @@ model_window.create_animation_plane(
 )
 ```
 
-`create_animation_map`: Create a map-based animation on a tile basemap.
-
-```python
-model_window.create_animation_map(
-    time_start=0.0,
-    time_end=None,
-    n_frames=50,
-    component="resultant",
-    data_type="vel",
-    factor=1.0,
-    cmap="RdBu_r",
-    thresh_pct=0.01,
-    radius=4,
-    fill_opacity=0.85,
-    figsize=(14, 10),
-    dpi=100,
-    fps=10,
-    ffmpeg_path=None,
-    output_dir="animation_map",
-    output_video="animation_map.mp4",
-    crs_utm="EPSG:32719",
-    tile_zoom=11,
-    tile_url="https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-    stations=None,
-)
-```
 
 ---
 
