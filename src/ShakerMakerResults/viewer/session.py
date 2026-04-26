@@ -164,6 +164,11 @@ class ViewerSession:
 
     def set_demand(self, demand: str):
         self.state.set_demand(demand)
+        # Auto-correct the component when crossing between regular and GF demand.
+        # e.g. "resultant" is invalid for GF;  "g11" is invalid for accel/vel/disp.
+        available = self.adapter.available_components_for_demand(demand)
+        if self.state.component not in available:
+            self.state.set_component(available[0])
         self.state.set_user_color_range(*self.default_color_limits())
         self._notify_window("demand")
         return self.state.demand

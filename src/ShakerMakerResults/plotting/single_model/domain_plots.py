@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import h5py
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
@@ -95,6 +96,109 @@ def plot_domain(self,
 
     if xyz_qa_t is not None: 
         print(f"QA position: {xyz_qa_t[0]}")
+    return fig, ax
+
+
+def plot_domain_calculated_t0(
+    self,
+    subfault=0,
+    show_calculated_only=False,
+    xyz_origin=None,
+    figsize=(8, 6),
+    axis_equal=True,
+    cmap="viridis",
+):
+    """Plot domain nodes coloured by GF t0.
+
+    Parameters
+    ----------
+    subfault : int or 'all', default 0
+    show_calculated_only : bool, default False
+    xyz_origin : array-like (3,), optional
+        If provided, shifts all coordinates so that the QA station is
+        placed at this position [x, y, z] in metres.
+    figsize : tuple, default (8, 6)
+    axis_equal : bool, default True
+    cmap : str, default 'viridis'
+    """
+    if not getattr(self, "_has_gf", False):
+        print("GF not loaded."); return
+    if not getattr(self, "_has_map", False):
+        print("Map not loaded."); return
+    if not getattr(self, "_t0_available", False):
+        print("GF file does not contain t0."); return
+
+    nsources = int(getattr(self, "_nsources_db", getattr(self, "_nsources", 0)))
+    use_all  = (subfault == "all")
+    if not use_all:
+        subfault = int(subfault)
+
+    with h5py.File(self._gf_h5_path, "r") as f:
+        t0_all = np.asarray(f["t0"][:], dtype=float)
+
+    # Rotated coordinates — same as plot_domain
+    xyz_t    = _rotate(self.xyz)
+    xyz_qa_t = _rotate(self.xyz_qa) if self.xyz_qa is not None else None
+    if xyz_origin is not None and xyz_qa_t is not None:
+        shift     = np.asarray(xyz_origin, dtype=float) - xyz_qa_t[0]
+        xyz_t    += shift
+        xyz_qa_t += shift
+
+    xyz_all_t   = np.vstack([xyz_t, xyz_qa_t]) if xyz_qa_t is not None else xyz_t.copy()
+    n_nodes_all = len(xyz_all_t)
+    x = xyz_all_t[:, 0]
+    y = xyz_all_t[:, 1]
+    z = xyz_all_t[:, 2]
+
+    pair_to_slot = np.asarray(self._pair_to_slot, dtype=int)
+
+    if use_all:
+        calc_node_ids = np.unique(self._pairs_to_compute[:, 0].astype(int))
+        t0_of_node    = np.full(n_nodes_all, np.inf)
+        for sf in range(nsources):
+            flat_ids   = np.arange(n_nodes_all, dtype=int) * nsources + sf
+            slots      = pair_to_slot[flat_ids]
+            t0_of_node = np.minimum(t0_of_node, t0_all[slots])
+        title = "all subfaults"
+    else:
+        flat_ids      = np.arange(n_nodes_all, dtype=int) * nsources + subfault
+        slots         = pair_to_slot[flat_ids]
+        t0_of_node    = t0_all[slots]
+        rep_nodes     = self._pairs_to_compute[:, 0].astype(int)
+        src_nodes     = self._pairs_to_compute[:, 1].astype(int)
+        calc_node_ids = np.unique(rep_nodes[src_nodes == subfault])
+        title         = f"subfault {subfault}"
+
+    fig = plt.figure(figsize=figsize)
+    ax  = fig.add_subplot(111, projection='3d')
+
+    if show_calculated_only:
+        mask = np.isin(np.arange(n_nodes_all), calc_node_ids)
+        sc   = ax.scatter(x[mask], y[mask], z[mask],
+                          c=t0_of_node[mask], cmap=cmap, s=50)
+    else:
+        calc_mask  = np.isin(np.arange(n_nodes_all), calc_node_ids)
+        adopt_mask = ~calc_mask
+        ax.scatter(x[adopt_mask], y[adopt_mask], z[adopt_mask],
+                   c=t0_of_node[adopt_mask], cmap=cmap,
+                   s=20, alpha=0.25, label=f"Adopted ({adopt_mask.sum()})")
+        sc = ax.scatter(x[calc_mask], y[calc_mask], z[calc_mask],
+                        c=t0_of_node[calc_mask], cmap=cmap,
+                        s=60, alpha=0.95,
+                        edgecolors="black", linewidths=0.8,
+                        label=f"Calculated ({calc_mask.sum()})")
+        ax.legend()
+
+    fig.colorbar(sc, ax=ax, shrink=0.75, label="t0 [s]")
+    ax.set_xlabel("X' (m)"); ax.set_ylabel("Y' (m)"); ax.set_zlabel("Z' (m)")
+    ax.set_title(f"GF t0 — {title}", fontweight="bold")
+    if axis_equal:
+        ax.axis("equal")
+    ax.grid(False)
+    plt.tight_layout()
+    plt.show()
+
+    print(f"Calculated: {len(calc_node_ids)}  |  t0 range: {t0_of_node.min():.3f} .. {t0_of_node.max():.3f} s")
     return fig, ax
 
 

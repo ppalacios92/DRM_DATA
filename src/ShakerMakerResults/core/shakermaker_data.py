@@ -753,6 +753,11 @@ class ShakerMakerData:
 
         return plot_domain(self, **kwargs)
 
+    def plot_domain_calculated_t0(self, **kwargs):
+        from ..plotting.single_model.domain_plots import plot_domain_calculated_t0
+
+        return plot_domain_calculated_t0(self, **kwargs)
+
     def plot_node_response(self, node_id=None, **kwargs):
         from ..plotting.single_model.node_plots import plot_node_response
 

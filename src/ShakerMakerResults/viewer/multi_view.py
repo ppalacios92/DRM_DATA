@@ -289,8 +289,9 @@ class MultiViewArea(QtWidgets.QWidget):
         self._current_layout: str = "1×1"
         self._container: QtWidgets.QWidget | None = None
         self._layout_n: dict[str, int] = dict(LAYOUT_PRESETS)
-        # Demand that was active before entering the GF 3×3 layout; restored on exit.
+        # Demand + component active before the GF 3×3 layout; both restored on exit.
         self._pre_gf_demand: str | None = None
+        self._pre_gf_component: str | None = None
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -484,8 +485,9 @@ class MultiViewArea(QtWidgets.QWidget):
         """
         session = self.session
 
-        # Step 1 — remember old demand.
+        # Step 1 — remember old demand + component so both can be restored on exit.
         self._pre_gf_demand = session.state.demand
+        self._pre_gf_component = session.state.component
 
         # Step 2 — pre-warm all 9 GF series so playback is instant.
         # Show a progress dialog so the user sees Ladruno is working.
@@ -588,17 +590,30 @@ class MultiViewArea(QtWidgets.QWidget):
             except Exception:
                 pass
 
-        # Restore the demand that was active before the GF layout was entered.
-        pre = self._pre_gf_demand
-        self._pre_gf_demand = None
+        # Restore the demand + component that were active before GF layout.
+        pre_demand = self._pre_gf_demand
+        pre_comp   = self._pre_gf_component
+        self._pre_gf_demand    = None
+        self._pre_gf_component = None
 
-        if pre is not None and pre != session.state.demand:
+        if pre_demand is not None and pre_demand != session.state.demand:
+            # Restore the component first (set_demand auto-corrects it anyway,
+            # but setting it explicitly preserves the user's original choice).
+            if pre_comp is not None:
+                try:
+                    session.state.set_component(pre_comp)
+                except Exception:
+                    pass
             # set_demand fires the normal broadcast → rebuilds the new layout's
             # panes with their cleared pins.
-            session.set_demand(pre)
+            session.set_demand(pre_demand)
         else:
-            # Demand unchanged (user stayed on GF, or no saved state) — rebuild
-            # the new layout's visible panes manually with pins cleared.
+            # Demand unchanged — restore component manually and rebuild.
+            if pre_comp is not None:
+                try:
+                    session.state.set_component(pre_comp)
+                except Exception:
+                    pass
             for pane in panes_for_new_layout:
                 try:
                     if pane.scene is not None:
