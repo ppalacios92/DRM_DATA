@@ -622,6 +622,47 @@ The viewer is intended for interactive inspection of the same data already acces
 
 ---
 
+## 🛑 Disclaimer
+
+This library is developed for research and educational purposes within the context of physics-based seismic simulations and post-processing workflows. While it provides advanced visualization and analysis tools for ShakerMaker outputs, results should always be validated against reference solutions and engineering judgment.
+
+The authors assume no responsibility for incorrect use, misinterpretation of results, or consequences derived from numerical or modeling assumptions.
+
+
+---
+
+## Author
+
+Developed by **Patricio Palacios B. - Nicolas Mora Bowen**
+GitHub: [@ppalacios92](https://github.com/ppalacios92)
+GitHub: [@nmorabowen](https://github.com/nmorabowen)
+
+---
+
+## How to Cite
+
+```bibtex
+@misc{palacios2026shakermakerresults,
+  author       = {Patricio Palacios B. and Nicolas Mora Bowen},
+  title        = {ShakerMakerResults: Visualization and Analysis Toolkit for Physics-Based Seismic Simulations},
+  year         = {2026},
+  publisher    = {GitHub},
+  journal      = {GitHub repository},
+  howpublished = {\url{https://github.com/ppalacios92/ShakerMakerResults}}
+}
+```
+
+**APA (7th Edition):**
+Palacios, P., & Mora Bowen, N. (2026). *ShakerMakerResults: Visualization and analysis toolkit for physics-based seismic simulations* [Computer software]. GitHub. https://github.com/ppalacios92/ShakerMakerResults
+
+---
+
 ## License
 
-This project is distributed under the MIT License.
+This project is licensed under the MIT License – see the LICENSE file for details.
+
+---
+
+## Contributing
+
+Contributions are welcome! Feel free to submit pull requests, report bugs, or suggest new features through the GitHub issues page.
