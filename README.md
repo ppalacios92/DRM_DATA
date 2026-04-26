@@ -186,7 +186,6 @@ model_window.plot_domain(
     axis_equal=False,
 )
 ```
-
 | <img src="docs/images/domain.png" width="500"/> |
 |:---:|
 
@@ -202,6 +201,8 @@ model_window.plot_domain_calculated_t0(
     cmap="viridis",
 )
 ```
+| <img src="docs/images/t0.png" width="500"/> |
+|:---:|
 
 `plot_gf_connections`: Show donor/receiver GF relationships for one node.
 
@@ -214,6 +215,8 @@ model_window.plot_gf_connections(
     axis_equal=False,
 )
 ```
+| <img src="docs/images/gf_con.png" width="500"/> |
+|:---:|
 
 ### Node methods
 
@@ -230,6 +233,8 @@ model_window.plot_node_response(
     filtered=False,
 )
 ```
+| <img src="docs/images/node_response_vel.png" width="500"/> |
+|:---:|
 
 `plot_node_gf`: Plot Green Function time histories, optionally rotated to physical components.
 
@@ -262,6 +267,9 @@ model_window.plot_node_tensor_gf(
     figsize=(10, 8),
 )
 ```
+| <img src="docs/images/tensor.png" width="500"/> |
+|:---:|
+
 
 `plot_node_newmark`: Plot Newmark response spectra for one or more nodes.
 
@@ -277,6 +285,9 @@ model_window.plot_node_newmark(
     spectral_type="PSa",
 )
 ```
+| <img src="docs/images/newmark.png" width="500"/> |
+|:---:|
+
 
 `plot_node_arias`: Plot Arias intensity curves for one or more nodes.
 
@@ -290,6 +301,8 @@ model_window.plot_node_arias(
     factor=1.0,
 )
 ```
+| <img src="docs/images/arias.png" width="500"/> |
+|:---:|
 
 ### Surface methods
 
@@ -312,6 +325,8 @@ model_window.plot_surface(
     interp_resolution=300,
 )
 ```
+| <img src="docs/images/surface.png" width="500"/> |
+|:---:|
 
 `plot_surface_newmark`: Plot a 3D map of spectral values at one target period.
 
@@ -332,6 +347,8 @@ model_window.plot_surface_newmark(
     n_jobs=-1,
 )
 ```
+| <img src="docs/images/surface_newmark.png" width="500"/> |
+|:---:|
 
 `plot_surface_arias`: Plot a 3D map of Arias intensity across the domain.
 
@@ -350,6 +367,8 @@ model_window.plot_surface_arias(
     n_jobs=-1,
 )
 ```
+| <img src="docs/images/surface_arias.png" width="500"/> |
+|:---:|
 
 ### Animation methods
 
