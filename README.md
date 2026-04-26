@@ -603,7 +603,7 @@ Then launch it from a model object:
 model_window.viewer()
 ```
 
-| <img src="docs/images/viewer.png" width="500"/> |
+| <img src="docs/images/viewer.png" width="700"/> |
 |:---:|
 
 The viewer is intended for interactive inspection of the same data already accessible from the plotting API. A dedicated viewer section can be expanded later.
