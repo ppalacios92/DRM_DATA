@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import numpy as np
 
 from ._imports import require_viewer_dependencies
@@ -62,13 +63,18 @@ class ViewerToolBar(QtWidgets.QWidget):
         super().__init__(parent)
         self._multi_view = multi_view
         self._recording = False
-        self._recording_plotter = None   # captured at open_movie() call time
+        self._recording_plotters = []    # captured at open_movie() call time
         self._show_bbox = False
         self._show_axes = True
 
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(2, 1, 2, 1)
         layout.setSpacing(1)
+
+        self._all_windows_chk = QtWidgets.QCheckBox("All windows")
+        self._all_windows_chk.setToolTip("Apply toolbar actions to all visible panes")
+        self._all_windows_chk.setChecked(False)
+        layout.addWidget(self._all_windows_chk)
 
         # ── ISO views (4 angles) ─────────────────────────────────────────────
         self._add_sep(layout)
@@ -169,16 +175,48 @@ class ViewerToolBar(QtWidgets.QWidget):
         """Active pane's plotter — re-evaluated on every access."""
         return self._multi_view.active_plotter
 
+    def _visible_panes(self):
+        panes = list(getattr(self._multi_view, "_panes", []))
+        current_layout = getattr(self._multi_view, "_current_layout", "1×1")
+        layout_n = getattr(self._multi_view, "_layout_n", {})
+        needed = int(layout_n.get(current_layout, len(panes) or 1))
+        return panes[: max(0, min(needed, len(panes)))]
+
+    def _target_plotters(self):
+        if self._all_windows_chk.isChecked():
+            plotters = [getattr(pane, "plotter", None) for pane in self._visible_panes()]
+        else:
+            plotters = [self._plotter]
+        unique = []
+        seen = set()
+        for p in plotters:
+            if p is None:
+                continue
+            key = id(p)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(p)
+        return unique
+
+    def _target_panes(self):
+        if self._all_windows_chk.isChecked():
+            return self._visible_panes()
+        pane = getattr(self._multi_view, "active_pane", None)
+        return [pane] if pane is not None else []
+
     # ── View presets ──────────────────────────────────────────────────────────
 
     def _view_cb(self, method_name: str, kwargs: dict):
         """Return a callback that calls *method_name* on the active plotter."""
         def _cb():
-            p = self._plotter
-            if p is None:
+            plotters = self._target_plotters()
+            if not plotters:
                 return
-            fn = getattr(p, method_name, None)
-            if fn is not None:
+            for p in plotters:
+                fn = getattr(p, method_name, None)
+                if fn is None:
+                    continue
                 try:
                     fn(**kwargs)
                     p.render()
@@ -189,89 +227,93 @@ class ViewerToolBar(QtWidgets.QWidget):
     def _iso_view_cb(self, azimuth_extra: float):
         """Return a callback for an isometric view rotated by *azimuth_extra*°."""
         def _cb():
-            p = self._plotter
-            if p is None:
+            plotters = self._target_plotters()
+            if not plotters:
                 return
-            try:
-                p.view_isometric()
-                if azimuth_extra:
-                    p.camera.Azimuth(azimuth_extra)
-                    p.reset_camera_clipping_range()
-                p.render()
-            except Exception:
-                pass
+            for p in plotters:
+                try:
+                    p.view_isometric()
+                    if azimuth_extra:
+                        p.camera.Azimuth(azimuth_extra)
+                        p.reset_camera_clipping_range()
+                    p.render()
+                except Exception:
+                    pass
         return _cb
 
     def _fit_all(self):
-        p = self._plotter
-        if p is None:
+        plotters = self._target_plotters()
+        if not plotters:
             return
-        try:
-            p.reset_camera()
-            p.render()
-        except Exception:
-            pass
+        for p in plotters:
+            try:
+                p.reset_camera()
+                p.render()
+            except Exception:
+                pass
 
     # ── Camera ────────────────────────────────────────────────────────────────
 
     def _rotate_active_camera(self, degrees: float):
-        p = self._plotter
-        if p is None:
+        plotters = self._target_plotters()
+        if not plotters:
             return
-        camera = getattr(p, "camera", None)
-        if camera is None:
-            return
-        try:
-            angle = math.radians(float(degrees))
-            cos_a = math.cos(angle)
-            sin_a = math.sin(angle)
+        for p in plotters:
+            camera = getattr(p, "camera", None)
+            if camera is None:
+                continue
+            try:
+                angle = math.radians(float(degrees))
+                cos_a = math.cos(angle)
+                sin_a = math.sin(angle)
 
-            focal = camera.GetFocalPoint()
-            position = camera.GetPosition()
-            view_up = camera.GetViewUp()
+                focal = camera.GetFocalPoint()
+                position = camera.GetPosition()
+                view_up = camera.GetViewUp()
 
-            rel = [position[i] - focal[i] for i in range(3)]
-            rel_rot = (
-                cos_a * rel[0] - sin_a * rel[1],
-                sin_a * rel[0] + cos_a * rel[1],
-                rel[2],
-            )
-            up_rot = (
-                cos_a * view_up[0] - sin_a * view_up[1],
-                sin_a * view_up[0] + cos_a * view_up[1],
-                view_up[2],
-            )
+                rel = [position[i] - focal[i] for i in range(3)]
+                rel_rot = (
+                    cos_a * rel[0] - sin_a * rel[1],
+                    sin_a * rel[0] + cos_a * rel[1],
+                    rel[2],
+                )
+                up_rot = (
+                    cos_a * view_up[0] - sin_a * view_up[1],
+                    sin_a * view_up[0] + cos_a * view_up[1],
+                    view_up[2],
+                )
 
-            camera.SetPosition(
-                focal[0] + rel_rot[0],
-                focal[1] + rel_rot[1],
-                focal[2] + rel_rot[2],
-            )
-            camera.SetViewUp(*up_rot)
-            camera.OrthogonalizeViewUp()
-            p.reset_camera_clipping_range()
-            p.render()
-        except Exception:
-            pass
+                camera.SetPosition(
+                    focal[0] + rel_rot[0],
+                    focal[1] + rel_rot[1],
+                    focal[2] + rel_rot[2],
+                )
+                camera.SetViewUp(*up_rot)
+                camera.OrthogonalizeViewUp()
+                p.reset_camera_clipping_range()
+                p.render()
+            except Exception:
+                pass
 
     def _toggle_ortho(self, checked: bool):
-        p = self._plotter
-        if p is None:
+        plotters = self._target_plotters()
+        if not plotters:
             return
-        try:
-            if checked:
-                p.enable_parallel_projection()
-            else:
-                p.disable_parallel_projection()
-            p.render()
-        except Exception:
-            pass
+        for p in plotters:
+            try:
+                if checked:
+                    p.enable_parallel_projection()
+                else:
+                    p.disable_parallel_projection()
+                p.render()
+            except Exception:
+                pass
 
     # ── Capture ───────────────────────────────────────────────────────────────
 
     def _screenshot(self):
-        p = self._plotter
-        if p is None:
+        plotters = self._target_plotters()
+        if not plotters:
             return
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self, "Save Screenshot", "screenshot.png",
@@ -280,7 +322,15 @@ class ViewerToolBar(QtWidgets.QWidget):
         if not path:
             return
         try:
-            p.screenshot(path, transparent_background=False)
+            if len(plotters) == 1:
+                plotters[0].screenshot(path, transparent_background=False)
+                return
+
+            base, ext = os.path.splitext(path)
+            ext = ext or ".png"
+            for idx, p in enumerate(plotters, start=1):
+                out_path = f"{base}__pane{idx}{ext}"
+                p.screenshot(out_path, transparent_background=False)
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "Screenshot failed", str(exc))
 
@@ -291,8 +341,8 @@ class ViewerToolBar(QtWidgets.QWidget):
             self._stop_recording()
 
     def _start_recording(self):
-        p = self._plotter
-        if p is None:
+        plotters = self._target_plotters()
+        if not plotters:
             self._uncheck_record()
             return
 
@@ -306,11 +356,23 @@ class ViewerToolBar(QtWidgets.QWidget):
 
         try:
             if FFMPEG_EXE:
-                import os
                 os.environ["IMAGEIO_FFMPEG_EXE"] = FFMPEG_EXE
-            p.open_movie(path, framerate=12, quality=5)
-            # Capture this specific plotter — write/stop must use the same one.
-            self._recording_plotter = p
+            if len(plotters) == 1:
+                targets = [(plotters[0], path)]
+            else:
+                base, ext = os.path.splitext(path)
+                ext = ext or ".mp4"
+                targets = [
+                    (p, f"{base}__pane{idx}{ext}")
+                    for idx, p in enumerate(plotters, start=1)
+                ]
+
+            opened = []
+            for p, out_path in targets:
+                p.open_movie(out_path, framerate=12, quality=5)
+                opened.append(p)
+
+            self._recording_plotters = opened
             self._recording = True
             if _HAS_QTA:
                 self._record_btn.setIcon(
@@ -318,6 +380,12 @@ class ViewerToolBar(QtWidgets.QWidget):
                 )
             self._record_btn.setToolTip("Stop recording  ● REC")
         except Exception as exc:
+            for p in list(getattr(self, "_recording_plotters", [])):
+                try:
+                    p.close_movie()
+                except Exception:
+                    pass
+            self._recording_plotters = []
             self._uncheck_record()
             QtWidgets.QMessageBox.warning(
                 self, "Recording failed",
@@ -326,13 +394,14 @@ class ViewerToolBar(QtWidgets.QWidget):
             )
 
     def _stop_recording(self):
-        if self._recording and self._recording_plotter is not None:
-            try:
-                self._recording_plotter.close_movie()
-            except Exception:
-                pass
+        if self._recording and self._recording_plotters:
+            for p in list(self._recording_plotters):
+                try:
+                    p.close_movie()
+                except Exception:
+                    pass
         self._recording = False
-        self._recording_plotter = None
+        self._recording_plotters = []
         if _HAS_QTA:
             self._record_btn.setIcon(
                 qta.icon("mdi.record-circle-outline", color="#404040")
@@ -347,10 +416,11 @@ class ViewerToolBar(QtWidgets.QWidget):
 
     def write_frame_if_recording(self):
         """Write the current render as one video frame after each playback step."""
-        if not self._recording or self._recording_plotter is None:
+        if not self._recording or not self._recording_plotters:
             return
         try:
-            self._recording_plotter.write_frame()
+            for p in list(self._recording_plotters):
+                p.write_frame()
         except Exception:
             # Writer failed mid-recording — stop gracefully.
             self._stop_recording()
@@ -367,41 +437,46 @@ class ViewerToolBar(QtWidgets.QWidget):
         self._multi_view = None
 
     def _toggle_axes(self, checked: bool):
-        p = self._plotter
-        if p is None:
+        plotters = self._target_plotters()
+        if not plotters:
             return
         self._show_axes = checked
-        try:
-            if checked:
-                p.show_axes()
-            else:
-                p.hide_axes()
-            p.render()
-        except Exception:
-            pass
+        for p in plotters:
+            try:
+                if checked:
+                    p.show_axes()
+                else:
+                    p.hide_axes()
+                p.render()
+            except Exception:
+                pass
 
     def _toggle_bbox(self, checked: bool):
-        p = self._plotter
-        if p is None:
+        plotters = self._target_plotters()
+        if not plotters:
             return
         self._show_bbox = checked
-        try:
-            if checked:
-                p.add_bounding_box()
-            else:
-                p.remove_bounding_box()
-            p.render()
-        except Exception:
-            pass
+        for p in plotters:
+            try:
+                if checked:
+                    p.add_bounding_box()
+                else:
+                    p.remove_bounding_box()
+                p.render()
+            except Exception:
+                pass
 
     def _toggle_stations(self, checked: bool):
-        pane = getattr(self._multi_view, "active_pane", None)
-        if pane is None:
+        panes = self._target_panes()
+        if not panes:
             return
-        try:
-            pane.set_station_tags_visible(bool(checked))
-        except Exception:
-            pass
+        for pane in panes:
+            if pane is None:
+                continue
+            try:
+                pane.set_station_tags_visible(bool(checked))
+            except Exception:
+                pass
 
     def _sync_from_active_pane(self, pane=None):
         if pane is None:
@@ -444,9 +519,9 @@ class ViewerToolBar(QtWidgets.QWidget):
 
     def _matrix_spin(self) -> QtWidgets.QDoubleSpinBox:
         spin = QtWidgets.QDoubleSpinBox()
-        spin.setDecimals(4)
+        spin.setDecimals(0)
         spin.setRange(-1_000_000.0, 1_000_000.0)
-        spin.setSingleStep(0.1)
+        spin.setSingleStep(1.0)
         spin.setButtonSymbols(QtWidgets.QAbstractSpinBox.NoButtons)
         spin.setFixedWidth(50)
         spin.setFixedHeight(24)
@@ -467,9 +542,9 @@ class ViewerToolBar(QtWidgets.QWidget):
     def _apply_display_transform(self) -> None:
         matrix = np.array(
             [
-                [spin.value() for spin in self._transform_spins["X"]],
-                [spin.value() for spin in self._transform_spins["Y"]],
-                [spin.value() for spin in self._transform_spins["Z"]],
+                [int(spin.value()) for spin in self._transform_spins["X"]],
+                [int(spin.value()) for spin in self._transform_spins["Y"]],
+                [int(spin.value()) for spin in self._transform_spins["Z"]],
             ],
             dtype=float,
         )
