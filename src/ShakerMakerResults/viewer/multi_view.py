@@ -19,6 +19,7 @@ Design contract
 from __future__ import annotations
 
 from ._imports import require_viewer_dependencies
+from .busy_dialog import BusyDialog
 from .scene import ViewerScene
 
 _, QtInteractor, _, QtCore, _, QtWidgets = require_viewer_dependencies()
@@ -490,42 +491,38 @@ class MultiViewArea(QtWidgets.QWidget):
         self._pre_gf_component = session.state.component
 
         # Step 2 — pre-warm all 9 GF series so playback is instant.
-        # Show a progress dialog so the user sees Ladruno is working.
+        # Show the unified busy dialog while loading all components.
         if session.adapter.has_gf and session.adapter.has_map:
             sf = int(getattr(session, "_display_gf_subfault", 0))
             window = getattr(session, "window", None)
-            prog = None
+            busy = None
             if window is not None:
-                prog = QtWidgets.QProgressDialog(
-                    "Warming Green Function series…\nSeries 0 / 9  —  G_11",
-                    None,          # no cancel button
-                    0, 9,
+                busy = BusyDialog(
+                    "Warming Green Function series...\nSeries 0 / 9  -  G_11",
                     window,
+                    total_steps=9,
                 )
-                prog.setWindowTitle("Ladruno  ·  Green Functions")
-                prog.setMinimumDuration(0)
-                prog.setWindowModality(QtCore.Qt.ApplicationModal)
-                prog.setValue(0)
+                busy.show()
                 QtWidgets.QApplication.processEvents()
 
             for idx in range(9):
                 comp_label = _GF_LAYOUT_COMPONENTS[idx][1]   # e.g. "G_11"
-                if prog is not None:
-                    prog.setLabelText(
-                        f"Warming Green Function series…\n"
-                        f"Series {idx + 1} / 9  —  {comp_label}"
+                if busy is not None:
+                    busy.set_message(
+                        f"Warming Green Function series...\n"
+                        f"Series {idx + 1} / 9  -  {comp_label}"
                     )
                     QtWidgets.QApplication.processEvents()
                 try:
                     session.adapter.warm_gf_series(sf, idx)
                 except Exception:
                     pass
-                if prog is not None:
-                    prog.setValue(idx + 1)
+                if busy is not None:
+                    busy.set_step(idx + 1)
                     QtWidgets.QApplication.processEvents()
 
-            if prog is not None:
-                prog.close()
+            if busy is not None:
+                busy.close()
 
         # Steps 3 & 4 — camera + pins (before the demand switch so the first
         # rebuild already uses the correct per-pane component).

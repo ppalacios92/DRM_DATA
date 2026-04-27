@@ -32,6 +32,7 @@ from __future__ import annotations
 import time
 
 from ._imports import require_viewer_dependencies
+from .busy_dialog import BusyDialog
 from .colors import COLORMAP_OPTIONS
 from .trace_panel import AriasIntensityPanel, GFPanel, ResponsesPanel, SpectrumPanel
 
@@ -106,52 +107,6 @@ class _PageScrollArea(QtWidgets.QScrollArea):
         self.setWidget(page)
 
 
-# ── Busy-work overlay ─────────────────────────────────────────────────────────
-
-class _BusyDialog(QtWidgets.QDialog):
-    """Indeterminate 'Ladruno working…' overlay for heavy operations.
-
-    Shown by :meth:`_SectionBase._run_heavy` before any call that blocks the
-    Qt event loop (scene rebuild, HDF5 pre-warm, etc.).  The progress bar
-    animates on its own — no callbacks needed.
-    """
-
-    def __init__(self, message: str, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Ladruno")
-        # Remove close/max/min buttons so the user cannot dismiss mid-operation.
-        self.setWindowFlags(
-            QtCore.Qt.Dialog
-            | QtCore.Qt.CustomizeWindowHint
-            | QtCore.Qt.WindowTitleHint
-        )
-        self.setModal(True)
-        self.setFixedWidth(320)
-
-        lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(20, 18, 20, 18)
-        lay.setSpacing(10)
-
-        hdr = QtWidgets.QLabel("Ladruno working…")
-        hdr.setStyleSheet("font-weight: bold; font-size: 13px; color: #1565C0;")
-        lay.addWidget(hdr)
-
-        msg_lbl = QtWidgets.QLabel(message)
-        msg_lbl.setWordWrap(True)
-        msg_lbl.setStyleSheet("color: #404040; font-size: 11px;")
-        lay.addWidget(msg_lbl)
-
-        bar = QtWidgets.QProgressBar()
-        bar.setRange(0, 0)       # indeterminate — Qt animates the chunk automatically
-        bar.setTextVisible(False)
-        bar.setFixedHeight(6)
-        bar.setStyleSheet(
-            "QProgressBar { border: none; background: #e0e0e0; border-radius: 3px; }"
-            "QProgressBar::chunk { background: #1565C0; border-radius: 3px; }"
-        )
-        lay.addWidget(bar)
-
-
 # ── Shared base for Apply-button sections ─────────────────────────────────────
 
 class _SectionBase(QtWidgets.QWidget):
@@ -169,7 +124,7 @@ class _SectionBase(QtWidgets.QWidget):
         Calls ``processEvents()`` once after showing the dialog so the OS has
         time to paint it before the heavy work starts.
         """
-        dlg = _BusyDialog(message, self.window())
+        dlg = BusyDialog(message, self.window())
         dlg.show()
         QtWidgets.QApplication.processEvents()
         try:

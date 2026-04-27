@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 
+from .busy_dialog import BusyDialog
 from ._imports import require_viewer_dependencies
 from .controls import HeaderBar, StatusChipBar, TimeControls
 from .multi_view import MultiViewArea
@@ -245,32 +246,24 @@ class ViewerMainWindow(QtWidgets.QMainWindow):
         if self.session.state.disp_warp_enabled:
             series_to_load += [("disp", "e"), ("disp", "n"), ("disp", "z")]
 
-        # ── Show a proper progress dialog ─────────────────────────────────────
-        prog = QtWidgets.QProgressDialog(
-            "Loading simulation data…",
-            None,                              # no cancel button
-            0, len(series_to_load),
-            self,
-        )
-        prog.setWindowTitle("Ladruno  ·  ShakerMaker Results")
-        prog.setMinimumDuration(0)             # show immediately, even for fast loads
-        prog.setWindowModality(QtCore.Qt.ApplicationModal)
-        prog.setValue(0)
+        # ── Show the unified busy dialog ──────────────────────────────────────
+        busy = BusyDialog("Loading simulation data...", self, total_steps=len(series_to_load))
+        busy.show()
         QtWidgets.QApplication.processEvents()
 
         try:
             for i, (d, c) in enumerate(series_to_load):
-                prog.setLabelText(
-                    f"Loading simulation data…\n"
-                    f"Series {i + 1} / {len(series_to_load)}  —  {d} · {c}"
+                busy.set_message(
+                    f"Loading simulation data...\n"
+                    f"Series {i + 1} / {len(series_to_load)}  -  {d} · {c}"
                 )
                 self.session.adapter.scalar_series(d, c)
-                prog.setValue(i + 1)
+                busy.set_step(i + 1)
                 QtWidgets.QApplication.processEvents()
         except Exception:
             pass
         finally:
-            prog.close()
+            busy.close()
             self._update_status()
 
     # ── Window close / cleanup ────────────────────────────────────────────────
