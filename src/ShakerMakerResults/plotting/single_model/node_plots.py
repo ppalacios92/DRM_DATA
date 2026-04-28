@@ -367,7 +367,7 @@ def plot_node_arias(self,
     factor : float, default ``1.0``
         Multiplier applied to acceleration before computing Arias intensity.
     """
-    from EarthquakeSignal.core.arias_intensity import AriasIntensityAnalyzer
+    from ...analysis.arias_intensity import AriasIntensityAnalyzer
 
     nids = self._collect_node_ids(node_id, target_pos)
 

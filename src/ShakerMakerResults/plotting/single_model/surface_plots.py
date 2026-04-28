@@ -306,7 +306,7 @@ def plot_surface_arias(self,
     n_jobs : int, default -1
     """
     from joblib import Parallel, delayed
-    from EarthquakeSignal.core.arias_intensity import AriasIntensityAnalyzer
+    from ...analysis.arias_intensity import AriasIntensityAnalyzer
 
     dt        = self.time[1] - self.time[0]
     n         = self._n_nodes
@@ -340,7 +340,7 @@ def plot_surface_arias(self,
 
         if use_safe_mode:
             def _compute_arias(i):
-                from EarthquakeSignal.core.arias_intensity import \
+                from ...analysis.arias_intensity import \
                     AriasIntensityAnalyzer as _AIA
                 with h5py.File(_filename, 'r') as _f:
                     _d = _f[_hdf5_path][3*i : 3*i+3, :]

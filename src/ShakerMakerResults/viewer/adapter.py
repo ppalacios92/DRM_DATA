@@ -601,10 +601,10 @@ class ViewerDataAdapter:
             return self._arias_cache[node_id]
 
         try:
-            from EarthquakeSignal.core.arias_intensity import AriasIntensityAnalyzer
+            from ..analysis.arias_intensity import AriasIntensityAnalyzer
         except ImportError as exc:  # pragma: no cover - optional runtime dependency
             raise ImportError(
-                "Arias intensity requires EarthquakeSignal.core.arias_intensity."
+                "Arias intensity requires ShakerMakerResults.analysis.arias_intensity."
             ) from exc
 
         acc = self.trace(node_id, "accel")

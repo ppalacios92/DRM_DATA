@@ -18,7 +18,7 @@ def plot_models_arias(
     factor=1.0,
 ):
     """Plot Arias intensity curves for multiple models, overlaid in one figure."""
-    from EarthquakeSignal.core.arias_intensity import AriasIntensityAnalyzer
+    from ..analysis.arias_intensity import AriasIntensityAnalyzer
 
     if node_ids is None and target_pos is None:
         raise ValueError("Provide node_ids or target_pos.")
