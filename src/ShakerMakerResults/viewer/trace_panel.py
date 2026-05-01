@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ._imports import require_viewer_dependencies
 
-_, _, _, _, _, QtWidgets = require_viewer_dependencies()
+_, _, _, QtCore, _, QtWidgets = require_viewer_dependencies()
 
 try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -124,17 +124,63 @@ class SpectrumPanel(QtWidgets.QWidget):
         super().__init__(parent)
         self.session = session
         self._current_node = None
+        self._table_rows: list[tuple[float, float, float, float]] = []
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(3)
 
         self.title_label = QtWidgets.QLabel("No node selected")
+        self.title_label.setStyleSheet("font-size: 11px; color: #1e3558; font-weight: 600;")
+        self.title_label.setContentsMargins(2, 2, 2, 0)
         self.figure = Figure(figsize=(5, 4), constrained_layout=True)
         self.canvas = FigureCanvas(self.figure)
+        self.canvas.setMinimumHeight(330)
+        self.canvas.setMaximumHeight(390)
         self.axes = self.figure.subplots(3, 1, sharex=True)
 
+        plot_box = QtWidgets.QGroupBox("Plots")
+        plot_layout = QtWidgets.QVBoxLayout(plot_box)
+        plot_layout.setContentsMargins(6, 6, 6, 6)
+        plot_layout.addWidget(self.canvas)
+
+        table_box = QtWidgets.QGroupBox("Data")
+        table_layout = QtWidgets.QVBoxLayout(table_box)
+        table_layout.setContentsMargins(6, 8, 6, 6)
+        table_layout.setSpacing(6)
+
+        table_header = QtWidgets.QWidget()
+        table_header_layout = QtWidgets.QHBoxLayout(table_header)
+        table_header_layout.setContentsMargins(0, 0, 0, 0)
+        table_header_layout.setSpacing(6)
+        table_label = QtWidgets.QLabel("T, Sa (Z), Sa (E), Sa (N)")
+        table_label.setStyleSheet("color: #1e3558; font-weight: 600;")
+        self.copy_table_button = QtWidgets.QPushButton("Copy")
+        self.copy_table_button.setToolTip("Copy spectrum table to clipboard")
+        self.copy_table_button.setEnabled(False)
+        self.copy_table_button.clicked.connect(self._copy_table_to_clipboard)
+        table_header_layout.addWidget(table_label, 1)
+        table_header_layout.addWidget(self.copy_table_button, 0)
+
+        self.table = QtWidgets.QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["T", "Sa (Z)", "Sa (E)", "Sa (N)"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.table.setMinimumHeight(180)
+        self.table.setMaximumHeight(260)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        for col in range(4):
+            header.setSectionResizeMode(col, QtWidgets.QHeaderView.Stretch)
+
+        table_layout.addWidget(table_header)
+        table_layout.addWidget(self.table)
+
         layout.addWidget(self.title_label)
-        layout.addWidget(self.canvas, 1)
+        layout.addWidget(plot_box, 0)
+        layout.addWidget(table_box, 1)
 
         self.refresh("init")
 
@@ -149,6 +195,7 @@ class SpectrumPanel(QtWidgets.QWidget):
                 ax.clear()
                 ax.grid(True, alpha=0.25)
             self.title_label.setText("No node selected")
+            self._set_table_rows([])
             self.axes[-1].set_xlabel("Period [s]")
             self.canvas.draw_idle()
             return
@@ -166,6 +213,7 @@ class SpectrumPanel(QtWidgets.QWidget):
             self.title_label.setText(f"Spectrum unavailable: {exc}")
             for ax in self.axes:
                 ax.grid(True, alpha=0.25)
+            self._set_table_rows([])
             self.canvas.draw_idle()
             return
 
@@ -182,7 +230,36 @@ class SpectrumPanel(QtWidgets.QWidget):
             ax.grid(True, alpha=0.25)
             ax.legend(loc="upper right")
         self.axes[-1].set_xlabel("Period [s]")
+        self._set_table_rows(
+            zip(
+                spectrum["T"],
+                spectrum["PSa_z"],
+                spectrum["PSa_e"],
+                spectrum["PSa_n"],
+            )
+        )
         self.canvas.draw_idle()
+
+    def _set_table_rows(self, rows):
+        self._table_rows = [
+            (float(t), float(sa_z), float(sa_e), float(sa_n))
+            for t, sa_z, sa_e, sa_n in rows
+        ]
+        self.table.setRowCount(len(self._table_rows))
+        for row_idx, row in enumerate(self._table_rows):
+            for col_idx, value in enumerate(row):
+                item = QtWidgets.QTableWidgetItem(f"{value:.8g}")
+                item.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+                self.table.setItem(row_idx, col_idx, item)
+        self.copy_table_button.setEnabled(bool(self._table_rows))
+
+    def _copy_table_to_clipboard(self):
+        lines = ["T\tSa (Z)\tSa (E)\tSa (N)"]
+        lines.extend(
+            f"{t:.10g}\t{sa_z:.10g}\t{sa_e:.10g}\t{sa_n:.10g}"
+            for t, sa_z, sa_e, sa_n in self._table_rows
+        )
+        QtWidgets.QApplication.clipboard().setText("\n".join(lines))
 
 
 class AriasIntensityPanel(QtWidgets.QWidget):
@@ -192,17 +269,51 @@ class AriasIntensityPanel(QtWidgets.QWidget):
         super().__init__(parent)
         self.session = session
         self._current_node = None
+        self._metric_rows: list[tuple[str, float, float, float, float, float]] = []
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(3)
 
         self.title_label = QtWidgets.QLabel("No node selected")
+        self.title_label.setStyleSheet("font-size: 11px; color: #1e3558; font-weight: 600;")
+        self.title_label.setContentsMargins(2, 2, 2, 0)
         self.figure = Figure(figsize=(5, 4), constrained_layout=True)
         self.canvas = FigureCanvas(self.figure)
+        self.canvas.setMinimumHeight(330)
+        self.canvas.setMaximumHeight(390)
         self.axes = self.figure.subplots(3, 1, sharex=True)
 
+        plot_box = QtWidgets.QGroupBox("Plots")
+        plot_layout = QtWidgets.QVBoxLayout(plot_box)
+        plot_layout.setContentsMargins(6, 6, 6, 6)
+        plot_layout.addWidget(self.canvas)
+
+        metrics_box = QtWidgets.QGroupBox("Arias metrics")
+        metrics_layout = QtWidgets.QVBoxLayout(metrics_box)
+        metrics_layout.setContentsMargins(6, 8, 6, 6)
+        metrics_layout.setSpacing(6)
+
+        self.metrics_table = QtWidgets.QTableWidget(0, 6)
+        self.metrics_table.setHorizontalHeaderLabels(
+            ["Comp.", "Ia total", "t5", "t95", "D5-95", "pot_dest"]
+        )
+        self.metrics_table.verticalHeader().setVisible(False)
+        self.metrics_table.setAlternatingRowColors(True)
+        self.metrics_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.metrics_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.metrics_table.setMinimumHeight(96)
+        self.metrics_table.setMaximumHeight(138)
+        metrics_header = self.metrics_table.horizontalHeader()
+        metrics_header.setStretchLastSection(False)
+        for col in range(6):
+            metrics_header.setSectionResizeMode(col, QtWidgets.QHeaderView.Stretch)
+        metrics_layout.addWidget(self.metrics_table)
+
         layout.addWidget(self.title_label)
-        layout.addWidget(self.canvas, 1)
+        layout.addWidget(plot_box, 0)
+        layout.addWidget(metrics_box, 0)
+        layout.addStretch(1)
         self.refresh("init")
 
     def refresh(self, reason: str = "full"):
@@ -216,6 +327,7 @@ class AriasIntensityPanel(QtWidgets.QWidget):
                 ax.clear()
                 ax.grid(True, alpha=0.25)
             self.title_label.setText("No node selected")
+            self._set_metric_rows([])
             self.axes[-1].set_xlabel("Time [s]")
             self.canvas.draw_idle()
             return
@@ -233,11 +345,13 @@ class AriasIntensityPanel(QtWidgets.QWidget):
             self.title_label.setText(f"Arias unavailable: {exc}")
             for ax in self.axes:
                 ax.grid(True, alpha=0.25)
+            self._set_metric_rows([])
             self.canvas.draw_idle()
             return
 
         time = arias["time"]
         self.title_label.setText(f"Node {node_id} | Arias Intensity")
+        metric_rows = []
         for ax, label in zip(self.axes, ("z", "e", "n")):
             item = arias["components"][label]
             ax.plot(
@@ -245,7 +359,7 @@ class AriasIntensityPanel(QtWidgets.QWidget):
                 item["IA_pct"],
                 linewidth=1.2,
                 color=COMPONENT_COLORS[label],
-                label=f"{label.upper()} | Ia={item['ia_total']:.3f} m/s",
+                label=label.upper(),
             )
             ax.axvline(item["t_start"], color=COMPONENT_COLORS[label], linestyle="--", linewidth=1, alpha=0.45)
             ax.axvline(item["t_end"], color=COMPONENT_COLORS[label], linestyle="--", linewidth=1, alpha=0.45)
@@ -255,8 +369,40 @@ class AriasIntensityPanel(QtWidgets.QWidget):
             ax.set_ylim(0, 100)
             ax.grid(True, alpha=0.25)
             ax.legend(loc="upper left")
+            t5 = float(item["t_start"])
+            t95 = float(item["t_end"])
+            metric_rows.append(
+                (
+                    label.upper(),
+                    float(item["ia_total"]),
+                    t5,
+                    t95,
+                    t95 - t5,
+                    float(item.get("extra", 0.0)),
+                )
+            )
         self.axes[-1].set_xlabel("Time [s]")
+        self._set_metric_rows(metric_rows)
         self.canvas.draw_idle()
+
+    def _set_metric_rows(self, rows):
+        self._metric_rows = list(rows)
+        self.metrics_table.setRowCount(len(self._metric_rows))
+        for row_idx, row in enumerate(self._metric_rows):
+            comp, ia_total, t5, t95, duration, pot_dest = row
+            values = (
+                comp,
+                f"{ia_total:.8g}",
+                f"{t5:.8g}",
+                f"{t95:.8g}",
+                f"{duration:.8g}",
+                f"{pot_dest:.8g}",
+            )
+            for col_idx, value in enumerate(values):
+                item = QtWidgets.QTableWidgetItem(str(value))
+                align = QtCore.Qt.AlignCenter if col_idx == 0 else QtCore.Qt.AlignRight
+                item.setTextAlignment(align | QtCore.Qt.AlignVCenter)
+                self.metrics_table.setItem(row_idx, col_idx, item)
 
 
 class CombinedTracePanel(QtWidgets.QWidget):
@@ -896,14 +1042,23 @@ class ResponsesPanel(QtWidgets.QWidget):
         self._checkboxes: dict[tuple[str, str], QtWidgets.QCheckBox] = {}
 
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(4, 4, 4, 4)
-        root.setSpacing(4)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(6)
+
+        self.title_label = QtWidgets.QLabel("No node selected")
+        self.title_label.setStyleSheet("font-size: 11px; color: #1e3558; font-weight: 600;")
+        self.title_label.setContentsMargins(2, 2, 2, 0)
+        root.addWidget(self.title_label)
+
+        layout_box = QtWidgets.QGroupBox("Layout")
+        layout_box_lay = QtWidgets.QVBoxLayout(layout_box)
+        layout_box_lay.setContentsMargins(6, 8, 6, 6)
+        layout_box_lay.setSpacing(5)
 
         toolbar = QtWidgets.QWidget()
         toolbar_layout = QtWidgets.QHBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(0, 0, 0, 0)
         toolbar_layout.setSpacing(4)
-        toolbar_layout.addWidget(QtWidgets.QLabel("Layout:"))
 
         self._stacked_btn = QtWidgets.QPushButton("Stacked")
         self._overlay_btn = QtWidgets.QPushButton("Overlay")
@@ -922,7 +1077,7 @@ class ResponsesPanel(QtWidgets.QWidget):
         toolbar_layout.addWidget(self._stacked_btn)
         toolbar_layout.addWidget(self._overlay_btn)
         toolbar_layout.addStretch(1)
-        root.addWidget(toolbar)
+        layout_box_lay.addWidget(toolbar)
 
         controls_scroll = QtWidgets.QScrollArea()
         controls_scroll.setWidgetResizable(True)
@@ -962,22 +1117,24 @@ class ResponsesPanel(QtWidgets.QWidget):
 
         controls_layout.addStretch(1)
         controls_scroll.setWidget(controls_host)
-        root.addWidget(controls_scroll)
-
-        self.title_label = QtWidgets.QLabel("No node selected")
-        self.title_label.setStyleSheet("font-size: 11px; color: #404040;")
-        root.addWidget(self.title_label)
+        layout_box_lay.addWidget(controls_scroll)
+        root.addWidget(layout_box, 0)
 
         self.figure = Figure(constrained_layout=True)
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setMinimumHeight(220)
         self.canvas.mpl_connect("draw_event", self._on_draw)
 
+        plot_box = QtWidgets.QGroupBox("Plots")
+        plot_layout = QtWidgets.QVBoxLayout(plot_box)
+        plot_layout.setContentsMargins(6, 8, 6, 6)
+
         canvas_scroll = QtWidgets.QScrollArea()
         canvas_scroll.setWidgetResizable(True)
         canvas_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         canvas_scroll.setWidget(self.canvas)
-        root.addWidget(canvas_scroll, 1)
+        plot_layout.addWidget(canvas_scroll)
+        root.addWidget(plot_box, 1)
 
         self.refresh("init")
 

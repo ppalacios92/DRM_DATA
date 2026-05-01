@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from ._imports import require_viewer_dependencies
 from .colors import BACKGROUND_PRESETS, COLORMAP_OPTIONS
+from .icons import icon
+from .theme import LIGHT_PALETTE
 
 _, _, _, QtCore, QtGui, QtWidgets = require_viewer_dependencies()
 
@@ -14,9 +16,10 @@ class HeaderBar(QtWidgets.QWidget):
     def __init__(self, session, parent=None):
         super().__init__(parent)
         self.session = session
+        self.setObjectName("ViewerHeader")
 
         layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(12, 8, 10, 8)
 
         title = QtWidgets.QLabel(session.title)
         font = title.font()
@@ -40,10 +43,13 @@ class AppearanceButton(QtWidgets.QToolButton):
         super().__init__(parent)
         self.session = session
 
-        self.setText("⚙")
+        self.setObjectName("IconButton")
+        self.setIcon(icon("gear", LIGHT_PALETTE.navy, 16))
+        self.setIconSize(QtCore.QSize(16, 16))
         self.setToolTip("Appearance")
         self.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         self.setAutoRaise(True)
+        self.setFixedSize(28, 28)
 
         self.menu_widget = QtWidgets.QWidget()
         form = QtWidgets.QFormLayout(self.menu_widget)
@@ -119,6 +125,7 @@ class TimeControls(QtWidgets.QWidget):
         super().__init__(parent)
         self.session = session
         self.on_play_toggled = on_play_toggled
+        self.setObjectName("TimeControls")
         self._pending_value = session.state.time_index
         self._dispatch_timer = QtCore.QTimer(self)
         self._dispatch_timer.setSingleShot(True)
@@ -126,13 +133,21 @@ class TimeControls(QtWidgets.QWidget):
         self._dispatch_timer.timeout.connect(self._flush_pending_value)
 
         layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(8)
 
-        self.jump_back_button = self._make_button("◀◀", lambda: session.jump_time(-10))
-        self.step_back_button = self._make_button("◀", lambda: session.step_time(-1))
-        self.step_forward_button = self._make_button("▶", lambda: session.step_time(1))
-        self.jump_forward_button = self._make_button("▶▶", lambda: session.jump_time(10))
+        self.jump_back_button = self._make_icon_button(
+            "skip_back", "Jump back 10 frames", lambda: session.jump_time(-10)
+        )
+        self.step_back_button = self._make_icon_button(
+            "step_back", "Previous frame", lambda: session.step_time(-1)
+        )
+        self.step_forward_button = self._make_icon_button(
+            "step_forward", "Next frame", lambda: session.step_time(1)
+        )
+        self.jump_forward_button = self._make_icon_button(
+            "skip_forward", "Jump forward 10 frames", lambda: session.jump_time(10)
+        )
 
         self.slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.slider.setMinimum(0)
@@ -141,7 +156,10 @@ class TimeControls(QtWidgets.QWidget):
         self.slider.sliderReleased.connect(self._flush_pending_value)
 
         self.time_label = QtWidgets.QLabel()
-        self.play_button = self._make_button("▶ Play", self._toggle_play)
+        self.time_label.setObjectName("TimeLabel")
+        self.time_label.setMinimumWidth(82)
+        self.time_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.play_button = self._make_play_button()
         self.speed_spin = QtWidgets.QDoubleSpinBox()
         self.speed_spin.setDecimals(1)
         self.speed_spin.setMinimum(0.1)
@@ -150,15 +168,24 @@ class TimeControls(QtWidgets.QWidget):
         self.speed_spin.setSuffix("x")
         self.speed_spin.valueChanged.connect(session.set_playback_speed)
 
-        layout.addWidget(self.jump_back_button)
-        layout.addWidget(self.step_back_button)
+        transport_group = QtWidgets.QWidget()
+        transport_layout = QtWidgets.QHBoxLayout(transport_group)
+        transport_layout.setContentsMargins(0, 0, 0, 0)
+        transport_layout.setSpacing(4)
+        transport_layout.addWidget(self.jump_back_button)
+        transport_layout.addWidget(self.step_back_button)
+        transport_layout.addWidget(self.play_button)
+        transport_layout.addWidget(self.step_forward_button)
+        transport_layout.addWidget(self.jump_forward_button)
+
+        speed_label = QtWidgets.QLabel("Speed")
+        speed_label.setObjectName("SpeedLabel")
+
+        layout.addWidget(transport_group)
         layout.addWidget(self.slider, 1)
-        layout.addWidget(self.step_forward_button)
-        layout.addWidget(self.jump_forward_button)
         layout.addWidget(self.time_label)
-        layout.addWidget(QtWidgets.QLabel("Speed"))
+        layout.addWidget(speed_label)
         layout.addWidget(self.speed_spin)
-        layout.addWidget(self.play_button)
 
         self.sync_from_state()
 
@@ -169,7 +196,7 @@ class TimeControls(QtWidgets.QWidget):
         self.slider.blockSignals(block)
         self.time_label.setText(f"{self.session.current_time():.3f} s")
         self._pending_value = self.session.state.time_index
-        self.play_button.setText("❚❚ Pause" if self.session.state.is_playing else "▶ Play")
+        self._sync_play_button()
         block = self.speed_spin.blockSignals(True)
         self.speed_spin.setValue(float(self.session.state.playback_speed))
         self.speed_spin.blockSignals(block)
@@ -190,14 +217,39 @@ class TimeControls(QtWidgets.QWidget):
 
     def _toggle_play(self):
         self.session.toggle_playing()
+        self._sync_play_button()
         if self.on_play_toggled is not None:
             self.on_play_toggled(self.session.state.is_playing)
 
+    def _sync_play_button(self):
+        if self.session.state.is_playing:
+            self.play_button.setText("Pause")
+            self.play_button.setIcon(icon("pause", LIGHT_PALETTE.navy, 16))
+        else:
+            self.play_button.setText("Play")
+            self.play_button.setIcon(icon("play", LIGHT_PALETTE.navy, 16))
+
     @staticmethod
-    def _make_button(text, callback):
-        button = QtWidgets.QPushButton(text)
+    def _make_icon_button(icon_name, tooltip, callback):
+        button = QtWidgets.QToolButton()
+        button.setObjectName("IconButton")
+        button.setIcon(icon(icon_name, LIGHT_PALETTE.text, 16))
+        button.setIconSize(QtCore.QSize(16, 16))
+        button.setToolTip(tooltip)
         button.clicked.connect(callback)
-        button.setAutoDefault(False)
+        button.setAutoRaise(True)
+        button.setFixedSize(28, 28)
+        return button
+
+    def _make_play_button(self):
+        button = QtWidgets.QToolButton()
+        button.setObjectName("PlayButton")
+        button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        button.setIconSize(QtCore.QSize(16, 16))
+        button.setToolTip("Play or pause animation")
+        button.clicked.connect(self._toggle_play)
+        button.setFixedHeight(30)
+        button.setMinimumWidth(86)
         return button
 
 
@@ -212,14 +264,7 @@ class StatusChipBar(QtWidgets.QWidget):
         self._chips = []
         for _ in range(5):
             label = QtWidgets.QLabel()
-            label.setStyleSheet(
-                "QLabel {"
-                "padding: 2px 8px;"
-                "border-radius: 9px;"
-                "background: #e7eaf0;"
-                "color: #202630;"
-                "}"
-            )
+            label.setObjectName("StatusChip")
             layout.addWidget(label)
             self._chips.append(label)
         layout.addStretch(1)

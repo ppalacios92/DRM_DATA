@@ -7,6 +7,8 @@ import os
 import numpy as np
 
 from ._imports import require_viewer_dependencies
+from .icons import icon as viewer_icon
+from .theme import LIGHT_PALETTE
 
 _, _, _, QtCore, _, QtWidgets = require_viewer_dependencies()
 
@@ -74,42 +76,29 @@ class ViewerToolBar(QtWidgets.QWidget):
         self._all_windows_chk = QtWidgets.QCheckBox("All windows")
         self._all_windows_chk.setToolTip("Apply toolbar actions to all visible panes")
         self._all_windows_chk.setChecked(False)
+        self._all_windows_chk.toggled.connect(self._sync_apply_to_all)
         layout.addWidget(self._all_windows_chk)
-
-        # ── ISO views (4 angles) ─────────────────────────────────────────────
-        self._add_sep(layout)
-        for label, tip, azimuth in _ISO_PRESETS:
-            btn = self._btn(label, "mdi.rotate-3d-variant", tip)
-            btn.clicked.connect(self._iso_view_cb(azimuth))
-            layout.addWidget(btn)
-
-        # ── Orthogonal views ─────────────────────────────────────────────────
-        self._add_sep(layout)
-        for label, tip, icon_name, method, kwargs in _VIEW_PRESETS:
-            btn = self._btn(label, icon_name, tip)
-            btn.clicked.connect(self._view_cb(method, kwargs))
-            layout.addWidget(btn)
 
         # ── Camera ───────────────────────────────────────────────────────────
         self._add_sep(layout)
 
         fit_btn = self._btn(
-            "Fit", "mdi.fit-to-page-outline", "Fit all — reset camera to show full model"
+            "Fit", "fit", "Fit all — reset camera to show full model"
         )
         fit_btn.clicked.connect(self._fit_all)
         layout.addWidget(fit_btn)
         self._ortho_btn = self._btn(
-            "Ortho", "mdi.grid",
+            "Ortho", "ortho",
             "Toggle orthographic / perspective projection",
             checkable=True,
         )
         self._ortho_btn.toggled.connect(self._toggle_ortho)
         layout.addWidget(self._ortho_btn)
         self._add_sep(layout)
-        rot_minus_btn = self._btn("-90", "mdi.rotate-left", "Rotate active view -90 around Z")
+        rot_minus_btn = self._btn("-90", "rotate_left_90", "Rotate active view -90 around Z")
         rot_minus_btn.clicked.connect(lambda: self._rotate_active_camera(-90))
         layout.addWidget(rot_minus_btn)
-        rot_plus_btn = self._btn("+90", "mdi.rotate-right", "Rotate active view +90 around Z")
+        rot_plus_btn = self._btn("+90", "rotate_right_90", "Rotate active view +90 around Z")
         rot_plus_btn.clicked.connect(lambda: self._rotate_active_camera(90))
         layout.addWidget(rot_plus_btn)
         self._add_sep(layout)
@@ -166,6 +155,7 @@ class ViewerToolBar(QtWidgets.QWidget):
 
         self.setStyleSheet("ViewerToolBar { border-bottom: 1px solid #d0d0d0; }")
         self._sync_from_active_pane(self._multi_view.active_pane)
+        self._sync_apply_to_all(self._all_windows_chk.isChecked())
         self._load_transform_from_session()
 
     # ── Active-plotter access ─────────────────────────────────────────────────
@@ -204,6 +194,11 @@ class ViewerToolBar(QtWidgets.QWidget):
             return self._visible_panes()
         pane = getattr(self._multi_view, "active_pane", None)
         return [pane] if pane is not None else []
+
+    def _sync_apply_to_all(self, checked: bool) -> None:
+        setter = getattr(self._multi_view, "set_camera_apply_to_all", None)
+        if callable(setter):
+            setter(bool(checked))
 
     # ── View presets ──────────────────────────────────────────────────────────
 
@@ -494,10 +489,16 @@ class ViewerToolBar(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
+        title = QtWidgets.QLabel("Transform")
+        title.setStyleSheet(
+            f"font-size: 11px; color: {LIGHT_PALETTE.navy}; font-weight: 600;"
+        )
+        layout.addWidget(title)
+
         self._transform_spins: dict[str, list[QtWidgets.QDoubleSpinBox]] = {}
         for axis in ("X", "Y", "Z"):
             label = QtWidgets.QLabel(axis)
-            label.setStyleSheet("font-size: 11px; color: #303030;")
+            label.setStyleSheet(f"font-size: 11px; color: {LIGHT_PALETTE.navy};")
             layout.addWidget(label)
             row_spins: list[QtWidgets.QDoubleSpinBox] = []
             for _ in range(3):
@@ -563,7 +564,12 @@ class ViewerToolBar(QtWidgets.QWidget):
         checkable: bool = False,
     ) -> QtWidgets.QToolButton:
         btn = QtWidgets.QToolButton()
-        ic = _icon(icon_name)
+        local_icon_names = {"fit", "ortho", "rotate_left_90", "rotate_right_90"}
+        ic = (
+            viewer_icon(icon_name, LIGHT_PALETTE.navy, 18)
+            if icon_name in local_icon_names
+            else _icon(icon_name)
+        )
         if ic is not None:
             btn.setIcon(ic)
             btn.setIconSize(QtCore.QSize(18, 18))

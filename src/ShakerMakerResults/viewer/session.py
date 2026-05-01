@@ -6,6 +6,8 @@ from .adapter import GF_DEMAND, REGULAR_DEMANDS, ViewerDataAdapter
 from .colors import BACKGROUND_PRESETS, colormap_for_component, scalar_limits
 from .state import ViewerState
 
+VALID_STATIC_COLOR_BY = ("elevation_z",)
+
 
 class ViewerSession:
     """Coordinate adapter, state, and optional GUI window."""
@@ -34,6 +36,11 @@ class ViewerSession:
                 max_cache_entries=max_cache_entries,
             )
 
+        self._static_color_by: str | None = None
+        self._static_color_map: str = "terrain"
+        self._static_clamp_enabled: bool = False
+        self._static_user_vmin: float | None = None
+        self._static_user_vmax: float | None = None
         max_index = max(len(self.adapter.time) - 1, 0)
         self.state = ViewerState(
             time_index=time_index,
@@ -315,8 +322,41 @@ class ViewerSession:
         self._notify_window("panel_apply")
         return self.state.demand, self.state.component
 
+    def apply_static_color_settings(
+        self,
+        *,
+        color_by: str,
+        colormap: str,
+        vmin: float | None,
+        vmax: float | None,
+        clamp_enabled: bool,
+    ):
+        self._static_color_by = self._validate_static_color_by(color_by)
+        self._static_color_map = str(colormap).strip() or self._static_color_map
+        self._static_user_vmin = None if vmin is None else float(vmin)
+        self._static_user_vmax = None if vmax is None else float(vmax)
+        self._static_clamp_enabled = bool(clamp_enabled)
+        self._notify_window("static_color")
+        return self._static_color_by, self._static_color_map
+
     def current_display_gf_subfault(self) -> int:
         return int(self._display_gf_subfault)
+
+    def current_static_auto_limits(self) -> tuple[float, float]:
+        if self._static_color_by == "elevation_z":
+            return self.adapter.elevation_limits()
+        return self.adapter.elevation_limits()
+
+    def current_static_color_limits(self, scalars=None) -> tuple[float, float]:
+        if self._static_clamp_enabled and self._static_user_vmin is not None and self._static_user_vmax is not None:
+            vmin = float(self._static_user_vmin)
+            vmax = float(self._static_user_vmax)
+            if vmax <= vmin:
+                return vmin, vmin + 1.0
+            return vmin, vmax
+        if scalars is None:
+            return self.current_static_auto_limits()
+        return self.current_static_auto_limits()
 
     def apply_data_settings(self, *, demand: str, component: str):
         self.state.set_demand(demand)
@@ -434,6 +474,9 @@ class ViewerSession:
         return self.adapter.suggested_warp_scale()
 
     def set_playing(self, is_playing: bool):
+        had_static_color_override = bool(self._static_color_by)
+        if is_playing:
+            self._static_color_by = None
         if is_playing and not self.state.is_playing:
             if self.state.demand == GF_DEMAND:
                 # ── GF demand: pre-warm the full (n_nodes, nt_gf) series in
@@ -490,6 +533,8 @@ class ViewerSession:
             # Stopping: release the persistent handle (no-op if never opened).
             self.adapter.close_playback_handle()
 
+        if had_static_color_override and is_playing:
+            self._notify_window("static_color")
         self.state.set_playing(is_playing)
         self._notify_window("playback")
         return self.state.is_playing
@@ -509,6 +554,8 @@ class ViewerSession:
         return self.step_time(delta)
 
     def current_scalars(self):
+        if self._static_color_by == "elevation_z":
+            return self.adapter.elevation_snapshot()
         gf_subfault = self._display_gf_subfault if self.state.demand == GF_DEMAND else 0
         return self.adapter.scalar_snapshot(
             self.state.time_index,
@@ -576,6 +623,8 @@ class ViewerSession:
         )
 
     def default_color_limits(self) -> tuple[float, float]:
+        if self._static_color_by == "elevation_z":
+            return self.adapter.elevation_limits()
         gf_subfault = self._display_gf_subfault if self.state.demand == GF_DEMAND else 0
         return self.adapter.default_scalar_limits(
             self.state.demand,
@@ -584,6 +633,8 @@ class ViewerSession:
         )
 
     def current_color_limits(self, scalars=None) -> tuple[float, float]:
+        if self._static_color_by is not None:
+            return self.current_static_color_limits(scalars)
         if self.state.clamp_enabled and self.state.user_vmin is not None and self.state.user_vmax is not None:
             vmin = float(self.state.user_vmin)
             vmax = float(self.state.user_vmax)
@@ -718,7 +769,26 @@ class ViewerSession:
         return BACKGROUND_PRESETS[self.state.background]
 
     def current_colormap(self) -> str:
+        if self._static_color_by is not None:
+            return self._static_color_map
         return self.state.colormap or colormap_for_component(self.state.component)
+
+    def current_static_color_by(self) -> str | None:
+        return self._static_color_by
+
+    def current_static_colormap(self) -> str:
+        return self._static_color_map
+
+    def current_static_clamp_enabled(self) -> bool:
+        return self._static_clamp_enabled
+
+    def current_static_user_range(self) -> tuple[float | None, float | None]:
+        return self._static_user_vmin, self._static_user_vmax
+
+    def current_scalar_bar_title(self) -> str:
+        if self._static_color_by == "elevation_z":
+            return "Elevation Z [m]"
+        return self.state.demand
 
     def suggested_point_size(self) -> float:
         if self.state.point_size is not None:
@@ -733,3 +803,13 @@ class ViewerSession:
     def _notify_window(self, reason: str) -> None:
         if self.window is not None:
             self.window.on_session_updated(reason)
+
+    @staticmethod
+    def _validate_static_color_by(color_by: str) -> str:
+        color_by = str(color_by).strip().lower()
+        if color_by not in VALID_STATIC_COLOR_BY:
+            raise KeyError(
+                f"Unknown static color source '{color_by}'. "
+                f"Use one of {', '.join(VALID_STATIC_COLOR_BY)}."
+            )
+        return color_by

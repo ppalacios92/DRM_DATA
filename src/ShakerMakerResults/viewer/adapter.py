@@ -8,7 +8,6 @@ from collections import OrderedDict
 import numpy as np
 
 from ..core.gf_service import get_gf_tensor
-from ..utils import _R
 from .colors import scalar_limits
 
 try:
@@ -25,6 +24,15 @@ REGULAR_COMPONENTS = ("z", "e", "n", "resultant")
 GF_COMPONENTS = tuple(f"g{i}{j}" for i in range(1, 4) for j in range(1, 4))
 VALID_COMPONENTS = REGULAR_COMPONENTS + GF_COMPONENTS
 TRACE_COMPONENTS = ("z", "e", "n")
+
+DEFAULT_DISPLAY_TRANSFORM = np.array(
+    [
+        [0, 1, 0],
+        [1, 0, 0],
+        [0, 0, 1],
+    ],
+    dtype=float,
+)
 
 DISPLAY_DEMAND_LABELS = {
     "accel": "accel",
@@ -75,7 +83,7 @@ class ViewerDataAdapter:
         self.cache_time_series = bool(cache_time_series)
         self.max_cache_bytes = int(max_cache_bytes)
         self.max_cache_entries = max(1, int(max_cache_entries))
-        self._display_transform = np.asarray(_R, dtype=float).copy()
+        self._display_transform = DEFAULT_DISPLAY_TRANSFORM.copy()
 
         self._points = np.empty((0, 3), dtype=float)
         self._qa_point = None
@@ -164,6 +172,22 @@ class ViewerDataAdapter:
             (component, DISPLAY_COMPONENT_LABELS.get(component, component))
             for component in self.available_components_for_demand(demand)
         ]
+
+    def elevation_snapshot(self) -> np.ndarray:
+        """Return one static elevation value per displayed node in viewer-space metres."""
+        return np.asarray(self._display_points[:, 2], dtype=float)
+
+    def elevation_limits(self) -> tuple[float, float]:
+        """Return stable min/max limits for viewer-space node elevations."""
+        values = self.elevation_snapshot()
+        finite = values[np.isfinite(values)]
+        if finite.size == 0:
+            return -1.0, 1.0
+        vmin = float(np.min(finite))
+        vmax = float(np.max(finite))
+        if vmax <= vmin:
+            return vmin, vmin + 1.0
+        return vmin, vmax
 
     @property
     def trace_components(self) -> tuple[str, ...]:

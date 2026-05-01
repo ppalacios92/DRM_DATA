@@ -64,6 +64,8 @@ class ViewerScene:
         """Return True when this pane should render its own GF component."""
         from .adapter import GF_DEMAND
         return (
+            self.session.current_static_color_by() is None
+            and
             self._gf_component_pin is not None
             and self.session.state.demand == GF_DEMAND
         )
@@ -348,7 +350,7 @@ class ViewerScene:
             bar_title = str(self._gf_component_pin).upper()   # e.g. "G11"
         else:
             clim = self.session.current_color_limits(scalars)
-            bar_title = self.session.state.demand
+            bar_title = self.session.current_scalar_bar_title()
         return self.plotter.add_points(
             self.point_cloud,
             scalars="active_scalars",

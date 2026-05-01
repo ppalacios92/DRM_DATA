@@ -20,7 +20,9 @@ from __future__ import annotations
 
 from ._imports import require_viewer_dependencies
 from .busy_dialog import BusyDialog
+from .icons import icon
 from .scene import ViewerScene
+from .theme import LIGHT_PALETTE
 
 _, QtInteractor, _, QtCore, _, QtWidgets = require_viewer_dependencies()
 
@@ -53,6 +55,19 @@ _GF_LAYOUT_COMPONENTS: list[tuple[str, str]] = [
     ("g31", "G_31"), ("g32", "G_32"), ("g33", "G_33"),
 ]
 
+_CAMERA_VIEW_ENTRIES: list[tuple[str, str, str, str]] = [
+    ("ISO", "iso_ne", "NE", "view_iso_ne"),
+    ("ISO", "iso_nw", "NW", "view_iso_nw"),
+    ("ISO", "iso_sw", "SW", "view_iso_sw"),
+    ("ISO", "iso_se", "SE", "view_iso_se"),
+    ("ORTHO", "top", "Top", "view_top"),
+    ("ORTHO", "bottom", "Bot", "view_bottom"),
+    ("ORTHO", "front", "Front", "view_front"),
+    ("ORTHO", "back", "Back", "view_back"),
+    ("ORTHO", "left", "Left", "view_left"),
+    ("ORTHO", "right", "Right", "view_right"),
+]
+
 # Azimuth offsets for ISO presets (degrees, applied after view_isometric).
 _ISO_AZIMUTH: dict[str, int] = {
     "3D NE": 0,
@@ -75,6 +90,72 @@ class _ClickFilter(QtCore.QObject):
         if event.type() == QtCore.QEvent.MouseButtonPress:
             self._cb()
         return False                              # never consume the event
+
+
+class CameraViewRail(QtWidgets.QWidget):
+    """Vertical camera preset rail attached to the left of the viewport."""
+
+    def __init__(self, on_view_requested, parent=None):
+        super().__init__(parent)
+        self.setObjectName("CameraViewRail")
+        self.setFixedWidth(54)
+        self._on_view_requested = on_view_requested
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(4, 6, 4, 6)
+        layout.setSpacing(2)
+
+        self._buttons: dict[str, QtWidgets.QToolButton] = {}
+        group = QtWidgets.QButtonGroup(self)
+        group.setExclusive(True)
+
+        previous_section = None
+        for section, key, label, icon_name in _CAMERA_VIEW_ENTRIES:
+            if section != previous_section:
+                if previous_section is not None:
+                    layout.addSpacing(4)
+                section_label = QtWidgets.QLabel(section)
+                section_label.setObjectName("ViewRailSection")
+                section_label.setAlignment(QtCore.Qt.AlignCenter)
+                layout.addWidget(section_label)
+                previous_section = section
+
+            button = QtWidgets.QToolButton()
+            button.setObjectName("ViewRailButton")
+            button.setText(label)
+            button.setIcon(icon(icon_name, LIGHT_PALETTE.navy, 18))
+            button.setIconSize(QtCore.QSize(18, 18))
+            button.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
+            button.setCheckable(True)
+            button.setToolTip(self._tooltip_for(key))
+            button.clicked.connect(lambda _checked, k=key: self._request_view(k))
+            self._buttons[key] = button
+            group.addButton(button)
+            layout.addWidget(button)
+
+        layout.addStretch(1)
+        self._buttons["iso_ne"].setChecked(True)
+
+    def _request_view(self, key: str):
+        callback = self._on_view_requested
+        if callable(callback):
+            callback(key)
+
+    @staticmethod
+    def _tooltip_for(key: str) -> str:
+        tips = {
+            "iso_ne": "Isometric NE",
+            "iso_nw": "Isometric NW",
+            "iso_sw": "Isometric SW",
+            "iso_se": "Isometric SE",
+            "top": "Top view (+Z)",
+            "bottom": "Bottom view (-Z)",
+            "front": "Front view (-Y)",
+            "back": "Back view (+Y)",
+            "left": "Left view (-X)",
+            "right": "Right view (+X)",
+        }
+        return tips.get(key, key)
 
 
 # ── ViewPane ──────────────────────────────────────────────────────────────────
@@ -210,7 +291,7 @@ class ViewPane(QtWidgets.QWidget):
             self.scene.rebuild_for_visibility(render=False)
         elif reason == "color_range":
             self.scene.apply_color_range(render=False)
-        elif reason in {"appearance", "panel_apply"}:
+        elif reason in {"appearance", "panel_apply", "static_color"}:
             self.scene.apply_appearance(render=False)
             self.scene.refresh_selection(render=False)
         elif reason == "warp":
@@ -290,6 +371,7 @@ class MultiViewArea(QtWidgets.QWidget):
         self._current_layout: str = "1×1"
         self._container: QtWidgets.QWidget | None = None
         self._layout_n: dict[str, int] = dict(LAYOUT_PRESETS)
+        self._apply_camera_to_all_panes = False
         # Demand + component active before the GF 3×3 layout; both restored on exit.
         self._pre_gf_demand: str | None = None
         self._pre_gf_component: str | None = None
@@ -323,16 +405,16 @@ class MultiViewArea(QtWidgets.QWidget):
                     "QPushButton { border: 1px solid #1565C0; border-radius: 3px;"
                     "  background: #e8f0fe; color: #1565C0; font-size: 11px;"
                     "  font-weight: bold; }"
-                    "QPushButton:checked { background: #1565C0; color: white;"
-                    "  border-color: #1565C0; }"
+                    "QPushButton:checked { background: #e8f0fe; color: #1e3558;"
+                    "  border-color: #2a6bc2; }"
                     "QPushButton:hover:!checked { background: #c5d8fa; }"
                 )
             else:
                 btn.setStyleSheet(
                     "QPushButton { border: 1px solid #bbb; border-radius: 3px;"
                     "  background: #fff; font-size: 11px; }"
-                    "QPushButton:checked { background: #1565C0; color: white;"
-                    "  border-color: #1565C0; }"
+                    "QPushButton:checked { background: #e8f0fe; color: #1e3558;"
+                    "  border-color: #2a6bc2; }"
                     "QPushButton:hover:!checked { background: #e3eaf6; }"
                 )
             btn.clicked.connect(lambda _c, n=name: self._switch_layout(n))
@@ -343,16 +425,76 @@ class MultiViewArea(QtWidgets.QWidget):
         root.addWidget(bar)
 
         # ── Content area ──────────────────────────────────────────────────────
+        body = QtWidgets.QWidget()
+        body_lay = QtWidgets.QHBoxLayout(body)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.setSpacing(0)
+
+        self._view_rail = CameraViewRail(self._apply_camera_preset, self)
+        body_lay.addWidget(self._view_rail)
+
         self._content = QtWidgets.QWidget()
         self._content_lay = QtWidgets.QVBoxLayout(self._content)
         self._content_lay.setContentsMargins(0, 0, 0, 0)
         self._content_lay.setSpacing(0)
-        root.addWidget(self._content, 1)
+        body_lay.addWidget(self._content, 1)
+        root.addWidget(body, 1)
 
         # Start with a single pane.
         self._switch_layout("1×1")
 
     # ── Layout switching ──────────────────────────────────────────────────────
+
+    def _apply_camera_preset(self, key: str) -> None:
+        """Apply a camera preset from the left view rail."""
+        panes = self._camera_target_panes()
+        if not panes:
+            return
+
+        for pane in panes:
+            plotter = getattr(pane, "plotter", None)
+            if plotter is not None:
+                self._apply_camera_preset_to_plotter(plotter, key)
+
+    def set_camera_apply_to_all(self, enabled: bool) -> None:
+        """Mirror the toolbar's All windows state for the left view rail."""
+        self._apply_camera_to_all_panes = bool(enabled)
+
+    def _camera_target_panes(self) -> list[ViewPane]:
+        if self._apply_camera_to_all_panes:
+            needed = self._layout_n.get(self._current_layout, 1)
+            return self._panes[: max(0, min(needed, len(self._panes)))]
+        return [self._active_pane] if self._active_pane is not None else []
+
+    @staticmethod
+    def _apply_camera_preset_to_plotter(plotter, key: str) -> None:
+        try:
+            if key.startswith("iso_"):
+                plotter.view_isometric()
+                azimuth = {
+                    "iso_ne": 0,
+                    "iso_nw": 90,
+                    "iso_sw": 180,
+                    "iso_se": 270,
+                }.get(key, 0)
+                if azimuth:
+                    plotter.camera.Azimuth(azimuth)
+                    plotter.reset_camera_clipping_range()
+            elif key == "top":
+                plotter.view_xy()
+            elif key == "bottom":
+                plotter.view_xy(negative=True)
+            elif key == "front":
+                plotter.view_xz()
+            elif key == "back":
+                plotter.view_xz(negative=True)
+            elif key == "left":
+                plotter.view_yz(negative=True)
+            elif key == "right":
+                plotter.view_yz()
+            plotter.render()
+        except Exception:
+            pass
 
     def _switch_layout(self, name: str):
         """Switch to layout *name*, creating panes as needed."""

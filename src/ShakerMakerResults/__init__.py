@@ -107,7 +107,7 @@ print("""
   Repository  :  https://github.com/ppalacios92/ShakerMakerResults
   ShakerMaker :  https://github.com/ppalacios92/ShakerMaker
 
-  Patricio Palacios B.    |    Ladruno Team
+  Patricio Palacios B. | Nicolás Mora Bowen | José Abell | Ladruno Team
   
   ********* (>'-')> Ladruno4ever  *********
 """)
