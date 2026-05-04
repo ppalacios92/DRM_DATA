@@ -18,6 +18,12 @@ class ViewerScene:
         self.point_actor = None
         self.selection_actor = None
         self.multi_selection_actor = None   # red spheres for selection-mode set
+        self.vector_actor = None            # line overlay for vector field
+        self._vec_pv = None                 # pv.PolyData live source (lines)
+        self._vec_factor = None             # cached scale factor (float)
+        self._vec_N = 0                     # number of points in current field
+        self._vec_max_mag = 1.0             # scalar range upper bound
+        self._vec_pts_buf = None            # pre-allocated (4*N, 3) points buffer
         self.station_actor = None
         self.station_label_actor = None
         self.show_station_tags = True
@@ -197,6 +203,8 @@ class ViewerScene:
         if self.point_actor is not None:
             self.plotter.remove_actor(self.point_actor, render=False)
         self.point_actor = self._add_point_actor()
+        if self.session.state.vector_field_enabled:
+            self.refresh_vector_field(render=False)
         if render:
             self.plotter.render()
 
@@ -271,6 +279,207 @@ class ViewerScene:
         if render:
             self.plotter.render()
 
+    @staticmethod
+    def _build_vec_lut(cmap_name: str, max_mag: float) -> "vtk.vtkLookupTable":
+        lut = vtk.vtkLookupTable()
+        lut.SetNumberOfColors(256)
+        lut.SetTableRange(0.0, max(max_mag, 1e-30))
+        try:
+            import matplotlib.cm as _cm
+            cmap = _cm.get_cmap(cmap_name, 256)
+            for i in range(256):
+                r, g, b, a = cmap(i / 255.0)
+                lut.SetTableValue(i, r, g, b, 1.0)
+        except Exception:
+            lut.SetHueRange(0.667, 0.0)
+            lut.SetSaturationRange(1.0, 1.0)
+            lut.SetValueRange(1.0, 1.0)
+        lut.Build()
+        return lut
+
+    def refresh_vector_field(self, render: bool = True):
+        """Build a live all-lines overlay: shaft + V-tip, coloured by magnitude."""
+        self._teardown_vector_pipeline()
+
+        if not self.session.state.vector_field_enabled:
+            if render:
+                self.plotter.render()
+            return
+
+        try:
+            import numpy as np
+            points, vectors = self.session.current_vector_data()
+            if points is None or len(points) == 0:
+                return
+
+            # Apply the per-scene selection/domain filter so "Show only selected"
+            # also masks the vector field to match the main point cloud.
+            domain_idx = self._domain_index_array()
+            if domain_idx is not None:
+                if len(domain_idx) == 0:
+                    return
+                points = points[domain_idx]
+                vectors = vectors[domain_idx]
+
+            magnitudes = np.linalg.norm(vectors, axis=1)
+            max_mag = float(magnitudes.max())
+            if max_mag < 1e-30:
+                return
+
+            bounds = self.plotter.bounds
+            dx = bounds[1] - bounds[0]
+            dy = bounds[3] - bounds[2]
+            dz = bounds[5] - bounds[4]
+            domain_diag = max((dx**2 + dy**2 + dz**2) ** 0.5, 1.0)
+            n = max(len(points), 1)
+            factor = (
+                self.session.state.vector_field_scale
+                * domain_diag
+                * 0.05
+                / (n ** 0.33 * max_mag)
+            )
+            self._vec_factor = factor
+            self._vec_N = len(points)
+            self._vec_max_mag = max_mag
+
+            lut = self._build_vec_lut(self.session.state.vector_field_colormap, max_mag)
+            all_pts, lines, scalars = self._build_vec_geometry(
+                points, vectors, magnitudes, factor
+            )
+            self._vec_pts_buf = all_pts.copy()
+
+            self._vec_pv = pv.PolyData()
+            self._vec_pv.points = self._vec_pts_buf
+            self._vec_pv.lines = lines
+            self._vec_pv["magnitude"] = scalars
+
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputData(self._vec_pv)
+            mapper.SetScalarModeToUsePointData()
+            mapper.SetColorModeToMapScalars()
+            mapper.SetLookupTable(lut)
+            mapper.SetScalarRange(0.0, max_mag)
+
+            self.vector_actor = vtk.vtkActor()
+            self.vector_actor.SetMapper(mapper)
+            self.vector_actor.GetProperty().SetLineWidth(2.0)
+            self.vector_actor.SetPickable(0)
+
+            renderer = getattr(self.plotter, "renderer", None)
+            if renderer is not None:
+                renderer.AddActor(self.vector_actor)
+        except Exception:
+            self._teardown_vector_pipeline()
+
+        if render:
+            self.plotter.render()
+
+    def update_vector_arrows(self, render: bool = True):
+        """Hot-path: update line points in-place without rebuilding topology or allocs."""
+        if self._vec_pv is None or self._vec_factor is None or self._vec_pts_buf is None:
+            return
+        try:
+            import numpy as np
+            points, vectors = self.session.current_vector_data()
+            domain_idx = self._domain_index_array()
+            if domain_idx is not None:
+                if len(domain_idx) == 0:
+                    return
+                points = points[domain_idx]
+                vectors = vectors[domain_idx]
+            if vectors is None or len(vectors) != self._vec_N:
+                return
+
+            N = self._vec_N
+            factor = self._vec_factor
+
+            magnitudes = np.linalg.norm(vectors, axis=1)
+            safe_mag = np.where(magnitudes > 1e-30, magnitudes, 1.0)
+            dirs = vectors / safe_mag[:, None]
+
+            zup = np.array([0.0, 0.0, 1.0])
+            perps = np.cross(dirs, zup)
+            bad = np.linalg.norm(perps, axis=1) < 1e-6
+            if bad.any():
+                perps[bad] = np.cross(dirs[bad], [1.0, 0.0, 0.0])
+            perps /= np.maximum(np.linalg.norm(perps, axis=1, keepdims=True), 1e-30)
+
+            ends = points + vectors * factor
+            tip_len = (magnitudes * factor * 0.25)[:, None]
+
+            # Write directly into the pre-allocated buffer — no vstack, no lines recompute
+            buf = self._vec_pts_buf
+            buf[:N]    = points
+            buf[N:2*N] = ends
+            buf[2*N:3*N] = ends - dirs * tip_len + perps * tip_len * 0.5
+            buf[3*N:]    = ends - dirs * tip_len - perps * tip_len * 0.5
+
+            self._vec_pv.points = buf
+            self._vec_pv["magnitude"] = np.tile(magnitudes, 4).astype(float)
+            self._vec_pv.Modified()
+        except Exception:
+            pass
+        if render:
+            self.plotter.render()
+
+    @staticmethod
+    def _build_vec_geometry(points, vectors, magnitudes, factor):
+        """Return (all_pts, lines, scalars) for shaft + V-tip lines.
+
+        Point layout: [starts | ends | left-wings | right-wings]  (4×N)
+        Lines:        shaft (N) + left-wing (N) + right-wing (N)  (3×N)
+        """
+        import numpy as np
+        N = len(points)
+        safe_mag = np.where(magnitudes > 1e-30, magnitudes, 1.0)
+        dirs = vectors / safe_mag[:, None]           # unit shaft direction
+
+        # Perpendicular for the V — cross with Z, fall back to X
+        zup = np.array([0.0, 0.0, 1.0])
+        perps = np.cross(dirs, zup)
+        bad = np.linalg.norm(perps, axis=1) < 1e-6
+        if bad.any():
+            perps[bad] = np.cross(dirs[bad], [1.0, 0.0, 0.0])
+        perp_n = np.linalg.norm(perps, axis=1, keepdims=True)
+        perps /= np.maximum(perp_n, 1e-30)
+
+        ends = (points + vectors * factor).astype(float)
+        tip_len = (magnitudes * factor * 0.25)[:, None]  # 25 % of shaft length
+        left_pts  = ends - dirs * tip_len + perps * tip_len * 0.5
+        right_pts = ends - dirs * tip_len - perps * tip_len * 0.5
+
+        all_pts = np.vstack([points, ends, left_pts, right_pts]).astype(float)
+
+        idx = np.arange(N)
+        lines = np.empty((3 * N, 3), dtype=np.int_)
+        lines[0*N:1*N] = np.column_stack([np.full(N, 2), idx,     idx + N])
+        lines[1*N:2*N] = np.column_stack([np.full(N, 2), idx + N, idx + 2*N])
+        lines[2*N:3*N] = np.column_stack([np.full(N, 2), idx + N, idx + 3*N])
+
+        scalars = np.tile(magnitudes, 4).astype(float)
+        return all_pts, lines, scalars
+
+    def _teardown_vector_pipeline(self):
+        """Remove vector actor and release pipeline objects."""
+        if self.vector_actor is not None:
+            renderer = getattr(self.plotter, "renderer", None)
+            try:
+                if renderer is not None:
+                    renderer.RemoveActor(self.vector_actor)
+                else:
+                    self.plotter.remove_actor(self.vector_actor, render=False)
+            except Exception:
+                try:
+                    self.plotter.remove_actor(self.vector_actor, render=False)
+                except Exception:
+                    pass
+            self.vector_actor = None
+        self._vec_pv = None
+        self._vec_factor = None
+        self._vec_N = 0
+        self._vec_max_mag = 1.0
+        self._vec_pts_buf = None
+
     def update_node_opacity(self, render: bool = True):
         """Apply node_opacity to the main point actor without a full rebuild."""
         if self.point_actor is not None:
@@ -278,6 +487,25 @@ class ViewerScene:
                 self.point_actor.GetProperty().SetOpacity(
                     self.session.state.node_opacity
                 )
+            except Exception:
+                pass
+        if render:
+            self.plotter.render()
+
+    def update_point_sizes(self, render: bool = True):
+        """Apply point-size changes to existing actors without rebuilding domains."""
+        base_size = self._point_size()
+        updates = (
+            (self.point_actor, base_size),
+            (self.selection_actor, max(base_size + 8, 18)),
+            (self.multi_selection_actor, max(base_size + 6, 16)),
+            (self.station_actor, max(base_size + 3, 12)),
+        )
+        for actor, point_size in updates:
+            if actor is None:
+                continue
+            try:
+                actor.GetProperty().SetPointSize(float(point_size))
             except Exception:
                 pass
         if render:
@@ -585,6 +813,10 @@ class ViewerScene:
         try:
             if self.selection_actor is not None:
                 self.plotter.remove_actor(self.selection_actor, render=False)
+        except Exception:
+            pass
+        try:
+            self._teardown_vector_pipeline()
         except Exception:
             pass
         try:

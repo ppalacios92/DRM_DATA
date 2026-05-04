@@ -29,7 +29,7 @@ DEFAULT_DISPLAY_TRANSFORM = np.array(
     [
         [0, 1, 0],
         [1, 0, 0],
-        [0, 0, 1],
+        [0, 0, -1],
     ],
     dtype=float,
 )
@@ -76,7 +76,7 @@ class ViewerDataAdapter:
         model,
         *,
         cache_time_series: bool = True,
-        max_cache_bytes: int = 256 * 1024 * 1024,
+        max_cache_bytes: int = 512 * 1024 * 1024,
         max_cache_entries: int = 6,
     ):
         self.model = model

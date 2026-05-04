@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import math
 import os
-import numpy as np
 
 from ._imports import require_viewer_dependencies
 from .icons import icon as viewer_icon
 from .theme import LIGHT_PALETTE
 
-_, _, _, QtCore, _, QtWidgets = require_viewer_dependencies()
+_, _, _, QtCore, QtGui, QtWidgets = require_viewer_dependencies()
 
 try:
     import qtawesome as qta
@@ -66,7 +65,7 @@ class ViewerToolBar(QtWidgets.QWidget):
         self._multi_view = multi_view
         self._session = session
         self._recording = False
-        self._recording_plotters = []    # captured at open_movie() call time
+        self._recording_writer = None
         self._show_bbox = False
         self._show_axes = True
 
@@ -117,13 +116,13 @@ class ViewerToolBar(QtWidgets.QWidget):
         # ── Capture ───────────────────────────────────────────────────────────
         self._add_sep(layout)
 
-        shot_btn = self._btn("", "mdi.camera-outline", "Save screenshot as PNG")
+        shot_btn = self._btn("", "capture_screen", "Save full viewer window as PNG")
         shot_btn.clicked.connect(self._screenshot)
         layout.addWidget(shot_btn)
 
         self._record_btn = self._btn(
-            "", "mdi.record-circle-outline",
-            "Record animation to MP4 / GIF",
+            "Rec", "record_screen",
+            "Record full viewer window to MP4 / GIF",
             checkable=True,
         )
         self._record_btn.toggled.connect(self._toggle_record)
@@ -200,14 +199,10 @@ class ViewerToolBar(QtWidgets.QWidget):
         layout.addWidget(self._opacity_slider)
 
         layout.addStretch(1)
-        self._add_sep(layout)
-        self._transform_widget = self._build_transform_widget()
-        layout.addWidget(self._transform_widget)
 
         self.setStyleSheet("ViewerToolBar { border-bottom: 1px solid #d0d0d0; }")
         self._sync_from_active_pane(self._multi_view.active_pane)
         self._sync_apply_to_all(self._all_windows_chk.isChecked())
-        self._load_transform_from_session()
 
     # ── Active-plotter access ─────────────────────────────────────────────────
 
@@ -358,8 +353,8 @@ class ViewerToolBar(QtWidgets.QWidget):
     # ── Capture ───────────────────────────────────────────────────────────────
 
     def _screenshot(self):
-        plotters = self._target_plotters()
-        if not plotters:
+        widget = self._capture_widget()
+        if widget is None:
             return
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self, "Save Screenshot", "screenshot.png",
@@ -368,15 +363,10 @@ class ViewerToolBar(QtWidgets.QWidget):
         if not path:
             return
         try:
-            if len(plotters) == 1:
-                plotters[0].screenshot(path, transparent_background=False)
-                return
-
-            base, ext = os.path.splitext(path)
-            ext = ext or ".png"
-            for idx, p in enumerate(plotters, start=1):
-                out_path = f"{base}__pane{idx}{ext}"
-                p.screenshot(out_path, transparent_background=False)
+            self._wait_before_screen_capture()
+            pixmap = self._grab_results_pixmap()
+            if pixmap is None or pixmap.isNull() or not pixmap.save(path, "PNG"):
+                raise RuntimeError("Could not capture the viewer window.")
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "Screenshot failed", str(exc))
 
@@ -387,8 +377,8 @@ class ViewerToolBar(QtWidgets.QWidget):
             self._stop_recording()
 
     def _start_recording(self):
-        plotters = self._target_plotters()
-        if not plotters:
+        widget = self._capture_widget()
+        if widget is None:
             self._uncheck_record()
             return
 
@@ -403,56 +393,34 @@ class ViewerToolBar(QtWidgets.QWidget):
         try:
             if FFMPEG_EXE:
                 os.environ["IMAGEIO_FFMPEG_EXE"] = FFMPEG_EXE
-            if len(plotters) == 1:
-                targets = [(plotters[0], path)]
+            import imageio.v2 as imageio
+            ext = os.path.splitext(path)[1].lower()
+            if ext == ".gif":
+                self._recording_writer = imageio.get_writer(path, fps=12)
             else:
-                base, ext = os.path.splitext(path)
-                ext = ext or ".mp4"
-                targets = [
-                    (p, f"{base}__pane{idx}{ext}")
-                    for idx, p in enumerate(plotters, start=1)
-                ]
-
-            opened = []
-            for p, out_path in targets:
-                p.open_movie(out_path, framerate=12, quality=5)
-                opened.append(p)
-
-            self._recording_plotters = opened
+                self._recording_writer = imageio.get_writer(path, fps=12, quality=5)
             self._recording = True
-            if _HAS_QTA:
-                self._record_btn.setIcon(
-                    qta.icon("mdi.stop-circle-outline", color="#cc2020")
-                )
+            self._wait_before_screen_capture()
+            self._write_widget_frame()
+            self._record_btn.setIcon(viewer_icon("stop_screen", "#cc2020", 18))
             self._record_btn.setToolTip("Stop recording  ● REC")
         except Exception as exc:
-            for p in list(getattr(self, "_recording_plotters", [])):
-                try:
-                    p.close_movie()
-                except Exception:
-                    pass
-            self._recording_plotters = []
+            self._close_recording_writer()
+            self._recording = False
+            self._record_btn.setIcon(viewer_icon("record_screen", LIGHT_PALETTE.navy, 18))
             self._uncheck_record()
             QtWidgets.QMessageBox.warning(
                 self, "Recording failed",
                 f"{exc}\n\nffmpeg may not be installed. "
-                "Run:  pip install imageio-ffmpeg",
+                "Run:  pip install imageio imageio-ffmpeg",
             )
 
     def _stop_recording(self):
-        if self._recording and self._recording_plotters:
-            for p in list(self._recording_plotters):
-                try:
-                    p.close_movie()
-                except Exception:
-                    pass
+        if self._recording:
+            self._close_recording_writer()
         self._recording = False
-        self._recording_plotters = []
-        if _HAS_QTA:
-            self._record_btn.setIcon(
-                qta.icon("mdi.record-circle-outline", color="#404040")
-            )
-        self._record_btn.setToolTip("Record animation to MP4 / GIF")
+        self._record_btn.setIcon(viewer_icon("record_screen", LIGHT_PALETTE.navy, 18))
+        self._record_btn.setToolTip("Record full viewer window to MP4 / GIF")
 
     def _uncheck_record(self):
         """Silently uncheck the record button (user cancelled or error)."""
@@ -461,18 +429,79 @@ class ViewerToolBar(QtWidgets.QWidget):
         self._record_btn.blockSignals(False)
 
     def write_frame_if_recording(self):
-        """Write the current render as one video frame after each playback step."""
-        if not self._recording or not self._recording_plotters:
+        """Write the current viewer window as one video frame after each playback step."""
+        if not self._recording or self._recording_writer is None:
             return
         try:
-            for p in list(self._recording_plotters):
-                p.write_frame()
+            self._write_widget_frame()
         except Exception:
             # Writer failed mid-recording — stop gracefully.
             self._stop_recording()
             self._uncheck_record()
 
     # ── Overlays ──────────────────────────────────────────────────────────────
+
+    def _capture_widget(self):
+        return self.window()
+
+    def _grab_results_pixmap(self):
+        widget = self._capture_widget()
+        if widget is None:
+            return None
+        try:
+            widget.repaint()
+            QtWidgets.QApplication.processEvents()
+        except Exception:
+            pass
+        try:
+            window = widget.window().windowHandle()
+            screen = window.screen() if window is not None else QtGui.QGuiApplication.primaryScreen()
+            pos = widget.mapToGlobal(QtCore.QPoint(0, 0))
+            return screen.grabWindow(0, pos.x(), pos.y(), widget.width(), widget.height())
+        except Exception:
+            return widget.grab()
+
+    def _wait_before_screen_capture(self):
+        deadline = QtCore.QTime.currentTime().addMSecs(1000)
+        while QtCore.QTime.currentTime() < deadline:
+            QtWidgets.QApplication.processEvents(
+                QtCore.QEventLoop.AllEvents,
+                50,
+            )
+            QtCore.QThread.msleep(25)
+
+    def _write_widget_frame(self):
+        if self._recording_writer is None:
+            return
+        pixmap = self._grab_results_pixmap()
+        if pixmap is None or pixmap.isNull():
+            return
+        self._recording_writer.append_data(self._pixmap_to_rgb_array(pixmap))
+
+    def _pixmap_to_rgb_array(self, pixmap):
+        image_format = getattr(QtGui.QImage, "Format_RGBA8888", None)
+        if image_format is None:
+            image_format = QtGui.QImage.Format.Format_RGBA8888
+        image = pixmap.toImage().convertToFormat(image_format)
+        width = image.width()
+        height = image.height()
+        ptr = image.bits()
+        size = image.sizeInBytes() if hasattr(image, "sizeInBytes") else image.byteCount()
+        try:
+            ptr.setsize(size)
+        except AttributeError:
+            ptr = bytes(ptr)
+        arr = np.frombuffer(ptr, dtype=np.uint8).reshape((height, width, 4))
+        return arr[:, :, :3].copy()
+
+    def _close_recording_writer(self):
+        writer = self._recording_writer
+        self._recording_writer = None
+        if writer is not None:
+            try:
+                writer.close()
+            except Exception:
+                pass
 
     def dispose(self) -> None:
         """Release toolbar runtime state before the viewer closes."""
@@ -532,80 +561,6 @@ class ViewerToolBar(QtWidgets.QWidget):
         self._stations_btn.setChecked(bool(checked))
         self._stations_btn.blockSignals(False)
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
-
-    def _build_transform_widget(self) -> QtWidgets.QWidget:
-        widget = QtWidgets.QWidget()
-        layout = QtWidgets.QHBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-
-        title = QtWidgets.QLabel("Transform")
-        title.setStyleSheet(
-            f"font-size: 11px; color: {LIGHT_PALETTE.navy}; font-weight: 600;"
-        )
-        layout.addWidget(title)
-
-        self._transform_spins: dict[str, list[QtWidgets.QDoubleSpinBox]] = {}
-        for axis in ("X", "Y", "Z"):
-            label = QtWidgets.QLabel(axis)
-            label.setStyleSheet(f"font-size: 11px; color: {LIGHT_PALETTE.navy};")
-            layout.addWidget(label)
-            row_spins: list[QtWidgets.QDoubleSpinBox] = []
-            for _ in range(3):
-                spin = self._matrix_spin()
-                spin.valueChanged.connect(self._mark_transform_dirty)
-                layout.addWidget(spin)
-                row_spins.append(spin)
-            self._transform_spins[axis] = row_spins
-            if axis != "Z":
-                layout.addSpacing(6)
-
-        self._transform_apply_btn = QtWidgets.QPushButton("Apply")
-        self._transform_apply_btn.setFixedHeight(24)
-        self._transform_apply_btn.setEnabled(False)
-        self._transform_apply_btn.clicked.connect(self._apply_display_transform)
-        layout.addWidget(self._transform_apply_btn)
-        # TODO: Keep this editor bound to the single global viewer transform state during future geometry debugging.
-        return widget
-
-    def _matrix_spin(self) -> QtWidgets.QDoubleSpinBox:
-        spin = QtWidgets.QDoubleSpinBox()
-        spin.setDecimals(0)
-        spin.setRange(-1_000_000.0, 1_000_000.0)
-        spin.setSingleStep(1.0)
-        spin.setButtonSymbols(QtWidgets.QAbstractSpinBox.NoButtons)
-        spin.setFixedWidth(50)
-        spin.setFixedHeight(24)
-        return spin
-
-    def _load_transform_from_session(self) -> None:
-        matrix = np.asarray(self._multi_view.session.current_display_transform(), dtype=float)
-        for row_idx, axis in enumerate(("X", "Y", "Z")):
-            for col_idx, spin in enumerate(self._transform_spins[axis]):
-                blocked = spin.blockSignals(True)
-                spin.setValue(float(matrix[row_idx, col_idx]))
-                spin.blockSignals(blocked)
-        self._transform_apply_btn.setEnabled(False)
-
-    def _mark_transform_dirty(self, *_args) -> None:
-        self._transform_apply_btn.setEnabled(True)
-
-    def _apply_display_transform(self) -> None:
-        matrix = np.array(
-            [
-                [int(spin.value()) for spin in self._transform_spins["X"]],
-                [int(spin.value()) for spin in self._transform_spins["Y"]],
-                [int(spin.value()) for spin in self._transform_spins["Z"]],
-            ],
-            dtype=float,
-        )
-        try:
-            self._multi_view.session.apply_display_transform(matrix)
-            self._load_transform_from_session()
-        except Exception:
-            pass
-
     # ── Selection helpers ─────────────────────────────────────────────────────
 
     def _on_opacity_changed(self, value: int):
@@ -637,7 +592,15 @@ class ViewerToolBar(QtWidgets.QWidget):
         checkable: bool = False,
     ) -> QtWidgets.QToolButton:
         btn = QtWidgets.QToolButton()
-        local_icon_names = {"fit", "ortho", "rotate_left_90", "rotate_right_90"}
+        local_icon_names = {
+            "fit",
+            "ortho",
+            "rotate_left_90",
+            "rotate_right_90",
+            "capture_screen",
+            "record_screen",
+            "stop_screen",
+        }
         ic = (
             viewer_icon(icon_name, LIGHT_PALETTE.navy, 18)
             if icon_name in local_icon_names

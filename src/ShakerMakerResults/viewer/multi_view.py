@@ -276,6 +276,8 @@ class ViewPane(QtWidgets.QWidget):
         """Apply *reason* to this pane's scene and re-render."""
         if reason == "time":
             self.scene.refresh_scalars(render=False)
+            if self.session.state.vector_field_enabled:
+                self.scene.update_vector_arrows(render=False)
         elif reason == "selection":
             self.scene.refresh_selection(render=False)
         elif reason in {"stations", "stations_visibility"}:
@@ -303,6 +305,10 @@ class ViewPane(QtWidgets.QWidget):
             self.scene.refresh_multi_selection(render=False)
         elif reason == "node_opacity":
             self.scene.update_node_opacity(render=False)
+        elif reason == "point_size":
+            self.scene.update_point_sizes(render=False)
+        elif reason == "vector_field":
+            self.scene.refresh_vector_field(render=False)
         else:
             # "full" or any unknown reason — full rebuild.
             self.scene.rebuild_scalar_actor(render=False)

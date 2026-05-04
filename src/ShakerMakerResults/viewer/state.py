@@ -57,6 +57,12 @@ class ViewerState:
     selection_visibility: str = "all"
     node_opacity: float = 1.0
 
+    # ── Arrow / vector-field overlay ──────────────────────────────────────────
+    vector_field_enabled: bool = False
+    vector_field_demand: str = "disp"   # "accel" | "vel" | "disp"
+    vector_field_scale: float = 1.0
+    vector_field_colormap: str = "viridis"
+
     def __post_init__(self) -> None:
         self.demand = self._validate_demand(self.demand)
         self.component = self._validate_component(self.component)
@@ -83,6 +89,11 @@ class ViewerState:
         if self.selection_visibility not in ("all", "only", "hide"):
             self.selection_visibility = "all"
         self.node_opacity = max(0.0, min(1.0, float(self.node_opacity)))
+        self.vector_field_enabled = bool(self.vector_field_enabled)
+        _vfd = str(self.vector_field_demand).lower()
+        self.vector_field_demand = _vfd if _vfd in ("accel", "vel", "disp") else "disp"
+        self.vector_field_scale = max(0.01, float(self.vector_field_scale))
+        self.vector_field_colormap = str(self.vector_field_colormap) or "viridis"
 
     def set_time_index(self, time_index: int, max_index: int) -> int:
         self.time_index = max(0, min(int(time_index), int(max_index)))

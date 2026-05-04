@@ -23,7 +23,7 @@ class ViewerSession:
         selected_node=None,
         title: str | None = None,
         cache_time_series: bool = True,
-        max_cache_bytes: int = 256 * 1024 * 1024,
+        max_cache_bytes: int = 512 * 1024 * 1024,
         max_cache_entries: int = 6,
     ) -> None:
         if isinstance(model_or_adapter, ViewerDataAdapter):
@@ -272,7 +272,7 @@ class ViewerSession:
 
     def set_point_size(self, point_size: float | None):
         self.state.set_point_size(point_size)
-        self._notify_window("appearance")
+        self._notify_window("point_size")
         return self.state.point_size
 
     def set_show_scalar_bar(self, show_scalar_bar: bool):
@@ -490,6 +490,69 @@ class ViewerSession:
 
         self._notify_window("warp")
         return self.state.disp_warp_enabled, self.state.warp_axes, self.state.warp_scale
+
+    # ── Vector-field overlay ──────────────────────────────────────────────────
+
+    def apply_vector_field_settings(
+        self,
+        *,
+        enabled: bool,
+        demand: str,
+        scale: float,
+        colormap: str = "viridis",
+    ):
+        """Pre-warm the 3 vector components then toggle the arrow overlay.
+
+        The pre-warm reads E, N, Z series into the adapter cache so the first
+        ``refresh_vector_field()`` in the scene is pure NumPy with no HDF5 I/O.
+        """
+        demand_lower = str(demand).lower()
+        if demand_lower not in ("accel", "vel", "disp"):
+            demand_lower = "disp"
+        self.state.vector_field_enabled = bool(enabled)
+        self.state.vector_field_demand = demand_lower
+        self.state.vector_field_scale = max(0.01, float(scale))
+        self.state.vector_field_colormap = str(colormap) or "viridis"
+        if enabled:
+            for _comp in ("e", "n", "z"):
+                try:
+                    self.adapter.scalar_series(demand_lower, _comp)
+                except Exception:
+                    pass
+        self._notify_window("vector_field")
+
+    def current_vector_data(self):
+        """Return ``(points, vectors)`` for the current time step.
+
+        ``points`` is an N×3 float array of visible node positions.  When 3-D
+        warp is active the warped positions are returned so that every arrow
+        originates from the displaced node, not from its rest position.
+        ``vectors`` is an N×3 float array with columns [E, N, Z] of the active
+        vector-field demand.
+        """
+        import numpy as np
+
+        demand = self.state.vector_field_demand
+        t = self.state.time_index
+        kwargs = dict(
+            show_internal=self.state.show_internal,
+            show_external=self.state.show_external,
+            show_qa=self.state.show_qa,
+        )
+        e = self.adapter.visible_scalars(
+            self.adapter.scalar_snapshot(t, demand, "e"), **kwargs
+        )
+        n = self.adapter.visible_scalars(
+            self.adapter.scalar_snapshot(t, demand, "n"), **kwargs
+        )
+        z = self.adapter.visible_scalars(
+            self.adapter.scalar_snapshot(t, demand, "z"), **kwargs
+        )
+        # Use warped positions when warp is active so the arrow bases track the
+        # displaced geometry.  Falls back to base positions when warp is off.
+        points = self.current_warped_points()
+        vectors = np.stack([e, n, z], axis=1)
+        return points, vectors
 
     def apply_panel_settings(
         self,

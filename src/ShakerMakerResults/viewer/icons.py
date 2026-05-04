@@ -64,6 +64,21 @@ _PATHS = {
         "M16 7H9a5 5 0 1 0 4.5 7.2l-1.8-.9A3 3 0 1 1 9 9h7v3l4-4-4-4v3z"
         "M15 18h4v2h-4v-2zm1-5h2v4h-2v-4z"
     ),
+    "capture_screen": (
+        "M4 5h16c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V7"
+        "c0-1.1.9-2 2-2zm0 2v10h16V7H4zm4 2h2l.8-1h2.4l.8 1h2"
+        "c.55 0 1 .45 1 1v5c0 .55-.45 1-1 1H8c-.55 0-1-.45-1-1v-5"
+        "c0-.55.45-1 1-1zm4 1.5A2.5 2.5 0 1 0 12 15.5a2.5 2.5 0 0 0 0-5z"
+    ),
+    "record_screen": (
+        "M4 5h16c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V7"
+        "c0-1.1.9-2 2-2zm0 2v10h16V7H4zm8 2.5a3.5 3.5 0 1 1 0 7"
+        " 3.5 3.5 0 0 1 0-7z"
+    ),
+    "stop_screen": (
+        "M4 5h16c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V7"
+        "c0-1.1.9-2 2-2zm0 2v10h16V7H4zm6 3h4v4h-4v-4z"
+    ),
     # ── Side-panel nav icons ───────────────────────────────────────────────────
     "nav_node": (
         "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"
@@ -80,10 +95,16 @@ _PATHS = {
     ),
     "nav_warp": "M2 13c2-5 4-5 6 0s4 5 6 0 4-5 6 0M5 8l1 3M19 8l1 3M5 17l1-3M19 17l1-3",
     "nav_responses": (
-        "M4 18h2v-6H4v6zm4 0h2V7H8v11zm4 0h2v-4h-2v4zm4 0h2V9h-2v9z"
-        "M3 20v-2h18v2H3z"
+        '<path d="M4 13h3l2-6 3 11 3-8 2 3h3" '
+        'fill="none" stroke="{color}" stroke-width="1.8" '
+        'stroke-linecap="round" stroke-linejoin="round"/>'
     ),
-    "nav_gf": "M3 12h3l2-5 3 10 3-10 2 5h5",
+    "nav_gf": (
+        '<path d="M5 5v14h14" fill="none" stroke="{color}" '
+        'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<path d="M8 15l3-5 3 3 4-7" fill="none" stroke="{color}" '
+        'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
+    ),
     # ── Selection toolbar icons ────────────────────────────────────────────────
     "sel_cursor": (
         "M4 4l5 15 3-6 6-3z"
@@ -97,6 +118,14 @@ _PATHS = {
         "M12 6.5c2.76 0 5 2.24 5 5 0 .51-.08 1-.22 1.47l3.06 3.06A11.6 11.6 0 0 0 23 10"
         "c-1.73-4.39-6-7.5-11-7.5-1.51 0-2.95.31-4.27.83l2.3 2.3c.6-.2 1.28-.13 1.97-.13z"
     ),
+    # ── Geographic panel icon ──────────────────────────────────────────────────
+    "nav_geographic": (
+        "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"
+        "m-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1"
+        "c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3"
+        "c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41"
+        "c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"
+    ),
 }
 
 
@@ -104,6 +133,11 @@ def _svg(icon_name: str, color: str, size: int) -> bytes:
     path = _PATHS.get(icon_name)
     if path is None:
         raise KeyError(f"Unknown viewer icon '{icon_name}'.")
+    if path.lstrip().startswith("<"):
+        return (
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" '
+            f'viewBox="0 0 24 24">{path.format(color=color)}</svg>'
+        ).encode("utf-8")
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" '
         f'viewBox="0 0 24 24"><path fill="{color}" d="{path}"/></svg>'

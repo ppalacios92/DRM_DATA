@@ -53,6 +53,8 @@ _MENU_ENTRIES: list[tuple[str, str, str]] = [
     # ── separator ── analysis pages below ──
     ("Responses",  "nav_responses",  "Resp."),
     ("GF",         "nav_gf",         "GF"),
+    # ── pinned to bottom ──
+    ("Geographic", "nav_geographic", "Geo."),
 ]
 
 # Keys whose pages are heavy (lazy-created; refresh only when active).
@@ -523,6 +525,11 @@ class DisplaySection(_SectionBase):
         "init", "full", "demand", "component",
         "appearance", "color_range", "panel_apply",
     })
+    _VECTOR_DEMANDS = [
+        ("disp",  "Displacement"),
+        ("vel",   "Velocity"),
+        ("accel", "Acceleration"),
+    ]
     _STATIC_COLOR_REFRESH_REASONS = frozenset({
         "init", "full", "static_color", "playback",
     })
@@ -595,6 +602,44 @@ class DisplaySection(_SectionBase):
             self._make_apply_button(self._apply, "Applying display settings…")
         )
 
+        # ── Vector Field group ────────────────────────────────────────────
+        vector_box = QtWidgets.QGroupBox("Vector Field")
+        vector_form = QtWidgets.QFormLayout(vector_box)
+        vector_form.setContentsMargins(6, 4, 6, 6)
+
+        self.vector_enabled_cb = QtWidgets.QCheckBox("Show arrow glyphs")
+        self.vector_enabled_cb.toggled.connect(lambda *_: self._set_vector_dirty())
+        vector_form.addRow("", self.vector_enabled_cb)
+
+        self.vector_demand_combo = QtWidgets.QComboBox()
+        for val, lbl in self._VECTOR_DEMANDS:
+            self.vector_demand_combo.addItem(lbl, val)
+        self.vector_demand_combo.currentIndexChanged.connect(lambda *_: self._set_vector_dirty())
+        vector_form.addRow("Field", self.vector_demand_combo)
+
+        self.vector_cmap_combo = QtWidgets.QComboBox()
+        for cmap in COLORMAP_OPTIONS:
+            self.vector_cmap_combo.addItem(cmap, cmap)
+        self.vector_cmap_combo.currentTextChanged.connect(lambda *_: self._set_vector_dirty())
+        vector_form.addRow("Color ramp", self.vector_cmap_combo)
+
+        self.vector_scale_spin = QtWidgets.QDoubleSpinBox()
+        self.vector_scale_spin.setRange(0.01, 100.0)
+        self.vector_scale_spin.setValue(1.0)
+        self.vector_scale_spin.setSingleStep(0.25)
+        self.vector_scale_spin.setDecimals(2)
+        self.vector_scale_spin.setSuffix("×")
+        self.vector_scale_spin.valueChanged.connect(lambda *_: self._set_vector_dirty())
+        vector_form.addRow("Scale", self.vector_scale_spin)
+
+        self.vector_apply_btn = QtWidgets.QPushButton("Apply")
+        self.vector_apply_btn.setEnabled(False)
+        self.vector_apply_btn.clicked.connect(
+            lambda: self._run_heavy(self._apply_vector_field, "Ladruno computing vectors…")
+        )
+        vector_form.addRow("", self.vector_apply_btn)
+        outer.addWidget(vector_box)
+
         static_color_box = QtWidgets.QGroupBox("Color By")
         static_color_form = QtWidgets.QFormLayout(static_color_box)
         static_color_form.setContentsMargins(6, 4, 6, 6)
@@ -644,7 +689,42 @@ class DisplaySection(_SectionBase):
 
     # ── Sync from session state ───────────────────────────────────────────
 
+    def _set_vector_dirty(self):
+        if not self._syncing:
+            self.vector_apply_btn.setEnabled(True)
+
+    def _clear_vector_dirty(self):
+        self.vector_apply_btn.setEnabled(False)
+
+    def _apply_vector_field(self):
+        if self._syncing:
+            return
+        self.session.apply_vector_field_settings(
+            enabled=self.vector_enabled_cb.isChecked(),
+            demand=str(self.vector_demand_combo.currentData()),
+            scale=self.vector_scale_spin.value(),
+            colormap=str(self.vector_cmap_combo.currentData() or "viridis"),
+        )
+        self._clear_vector_dirty()
+
+    def _sync_vector_ui(self):
+        self._syncing = True
+        try:
+            b = self.vector_enabled_cb.blockSignals(True)
+            self.vector_enabled_cb.setChecked(self.session.state.vector_field_enabled)
+            self.vector_enabled_cb.blockSignals(b)
+            self._set_combo_data(self.vector_demand_combo, self.session.state.vector_field_demand)
+            self._set_combo(self.vector_cmap_combo, self.session.state.vector_field_colormap)
+            b = self.vector_scale_spin.blockSignals(True)
+            self.vector_scale_spin.setValue(self.session.state.vector_field_scale)
+            self.vector_scale_spin.blockSignals(b)
+        finally:
+            self._syncing = False
+
     def refresh(self, reason: str = "full"):
+        if reason == "vector_field":
+            self._sync_vector_ui()
+            return
         sync_display = reason in self._REFRESH_REASONS or not self._dirty
         sync_static = reason in self._STATIC_COLOR_REFRESH_REASONS or not self._static_color_dirty
         if not sync_display and not sync_static:
@@ -677,6 +757,9 @@ class DisplaySection(_SectionBase):
                 self.vmax_spin.setValue(float(self.session.state.user_vmax))
                 self.clamp_cb.setChecked(self.session.state.clamp_enabled)
                 self._clear_dirty()
+                # Sync vector field UI
+                self._sync_vector_ui()
+                self._clear_vector_dirty()
             if sync_static:
                 current_static = self.session.current_static_color_by() or VALID_STATIC_COLOR_BY[0]
                 self._set_combo_data(self.static_color_combo, current_static)
@@ -936,6 +1019,136 @@ class WarpSection(_SectionBase):
         self._clear_dirty()
 
 
+class GeographicSection(_SectionBase):
+    """UTM coordinate reference + display transform matrix panel."""
+
+    def __init__(self, session, parent=None):
+        super().__init__(session, parent)
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(6, 6, 6, 6)
+        outer.setSpacing(8)
+
+        # ── UTM Coordinates ───────────────────────────────────────────────
+        utm_box = QtWidgets.QGroupBox("UTM Coordinates")
+        utm_lay = QtWidgets.QVBoxLayout(utm_box)
+        utm_lay.setContentsMargins(6, 6, 6, 6)
+        utm_lay.setSpacing(4)
+
+        surf_lbl = QtWidgets.QLabel("Surface Coordinate")
+        surf_lbl.setStyleSheet("font-size: 11px; font-weight: 600;")
+        utm_lay.addWidget(surf_lbl)
+        self._surf_spins = self._xyz_spins(utm_lay)
+
+        utm_lay.addSpacing(4)
+        trans_lbl = QtWidgets.QLabel("Translate Coordinate")
+        trans_lbl.setStyleSheet("font-size: 11px; font-weight: 600;")
+        utm_lay.addWidget(trans_lbl)
+        self._trans_spins = self._xyz_spins(utm_lay)
+
+        outer.addWidget(utm_box)
+        outer.addWidget(self._make_apply_button(self._apply_utm, "Saving UTM reference…"))
+
+        # ── Display Transform ─────────────────────────────────────────────
+        tf_box = QtWidgets.QGroupBox("Display Transform")
+        tf_lay = QtWidgets.QVBoxLayout(tf_box)
+        tf_lay.setContentsMargins(6, 6, 6, 6)
+        tf_lay.setSpacing(3)
+
+        self._transform_spins: dict[str, list[QtWidgets.QDoubleSpinBox]] = {}
+        for axis in ("X", "Y", "Z"):
+            row = QtWidgets.QWidget()
+            rl = QtWidgets.QHBoxLayout(row)
+            rl.setContentsMargins(0, 0, 0, 0)
+            rl.setSpacing(3)
+            axis_lbl = QtWidgets.QLabel(axis)
+            axis_lbl.setFixedWidth(12)
+            rl.addWidget(axis_lbl)
+            spins = []
+            for _ in range(3):
+                s = self._tf_spin()
+                s.valueChanged.connect(self._mark_tf_dirty)
+                rl.addWidget(s, 1)
+                spins.append(s)
+            self._transform_spins[axis] = spins
+            tf_lay.addWidget(row)
+
+        self._tf_apply_btn = QtWidgets.QPushButton("Apply")
+        self._tf_apply_btn.setEnabled(False)
+        self._tf_apply_btn.clicked.connect(self._apply_transform)
+        tf_lay.addWidget(self._tf_apply_btn)
+        outer.addWidget(tf_box)
+        outer.addStretch(1)
+
+        self._load_transform()
+
+    # ── helpers ───────────────────────────────────────────────────────────
+
+    def _xyz_spins(self, parent_layout):
+        spins = []
+        for lbl in ("X", "Y", "Z"):
+            row = QtWidgets.QWidget()
+            rl = QtWidgets.QHBoxLayout(row)
+            rl.setContentsMargins(12, 0, 0, 0)
+            rl.setSpacing(4)
+            l = QtWidgets.QLabel(lbl)
+            l.setFixedWidth(12)
+            rl.addWidget(l)
+            s = self._coord_spin()
+            s.valueChanged.connect(lambda *_: self._set_dirty())
+            rl.addWidget(s, 1)
+            spins.append(s)
+            parent_layout.addWidget(row)
+        return spins
+
+    @staticmethod
+    def _tf_spin() -> QtWidgets.QDoubleSpinBox:
+        s = QtWidgets.QDoubleSpinBox()
+        s.setDecimals(0)
+        s.setRange(-1_000_000.0, 1_000_000.0)
+        s.setSingleStep(1.0)
+        s.setButtonSymbols(QtWidgets.QAbstractSpinBox.NoButtons)
+        return s
+
+    def _mark_tf_dirty(self, *_):
+        self._tf_apply_btn.setEnabled(True)
+
+    def _load_transform(self):
+        import numpy as np
+        try:
+            matrix = np.asarray(self.session.current_display_transform(), dtype=float)
+        except Exception:
+            return
+        for row_idx, axis in enumerate(("X", "Y", "Z")):
+            for col_idx, spin in enumerate(self._transform_spins[axis]):
+                b = spin.blockSignals(True)
+                spin.setValue(float(matrix[row_idx, col_idx]))
+                spin.blockSignals(b)
+        self._tf_apply_btn.setEnabled(False)
+
+    def _apply_utm(self):
+        self._clear_dirty()
+
+    def _apply_transform(self):
+        import numpy as np
+        matrix = np.array(
+            [
+                [int(s.value()) for s in self._transform_spins["X"]],
+                [int(s.value()) for s in self._transform_spins["Y"]],
+                [int(s.value()) for s in self._transform_spins["Z"]],
+            ],
+            dtype=float,
+        )
+        try:
+            self.session.apply_display_transform(matrix)
+            self._load_transform()
+        except Exception:
+            pass
+
+    def refresh(self, reason: str = "full"):
+        if reason in {"init", "full", "geometry_transform"}:
+            self._load_transform()
+
+
 # ── Main side panel ───────────────────────────────────────────────────────────
 
 class ViewerSidePanel(QtWidgets.QWidget):
@@ -978,6 +1191,13 @@ class ViewerSidePanel(QtWidgets.QWidget):
                 nav_lay.addSpacing(4)
                 nav_lay.addWidget(sep)
                 nav_lay.addSpacing(4)
+            elif key == "Geographic":
+                nav_lay.addStretch(1)
+                sep = QtWidgets.QFrame()
+                sep.setFrameShape(QtWidgets.QFrame.HLine)
+                sep.setFixedHeight(1)
+                sep.setStyleSheet("background: #d7dbe2;")
+                nav_lay.addWidget(sep)
 
             btn = QtWidgets.QToolButton()
             btn.setObjectName("SidePanelNavButton")
@@ -990,8 +1210,6 @@ class ViewerSidePanel(QtWidgets.QWidget):
             self._nav_buttons[key] = btn
             group.addButton(btn)
             nav_lay.addWidget(btn, alignment=QtCore.Qt.AlignHCenter)
-
-        nav_lay.addStretch(1)
         nav.setStyleSheet(
             "QWidget#SidePanelNav { background: #f3f4f6; border-right: 1px solid #d7dbe2; }"
             "QToolButton#SidePanelNavButton {"
@@ -1016,6 +1234,7 @@ class ViewerSidePanel(QtWidgets.QWidget):
         self._display_page    = DisplaySection(session)
         self._visibility_page = VisualizationSection(session)
         self._warp_page       = WarpSection(session)
+        self._geographic_page = GeographicSection(session)
 
         # Heavy pages: created lazily on first navigation.
         self._responses_page = _LazyPage(lambda: _ResponsesAnalysisTabs(session))
@@ -1028,6 +1247,7 @@ class ViewerSidePanel(QtWidgets.QWidget):
             "Warp":       self._warp_page,
             "Responses":  self._responses_page,
             "GF":         self._gf_page,
+            "Geographic": self._geographic_page,
         }
 
         self._page_views: dict[str, QtWidgets.QWidget] = {}
@@ -1106,6 +1326,7 @@ class ViewerSidePanel(QtWidgets.QWidget):
         self._display_page.refresh(reason)
         self._visibility_page.refresh(reason)
         self._warp_page.refresh(reason)
+        self._geographic_page.refresh(reason)
 
         # Mark non-active heavy pages dirty when their content would change.
         if reason in _STALE_REASONS:

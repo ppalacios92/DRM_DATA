@@ -89,15 +89,17 @@ class RevitInteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
 
     def _on_middle_button_press(self, _obj, _event):
         interactor = self.GetInteractor()
-        self._shift_orbiting = bool(interactor.GetShiftKey())
+        x, y = interactor.GetEventPosition()
+        self.FindPokedRenderer(x, y)
+        self._shift_orbiting = self._shift_pressed(interactor)
         if self._shift_orbiting:
-            self.OnLeftButtonDown()
+            self.StartRotate()
         else:
             self.OnMiddleButtonDown()
 
     def _on_middle_button_release(self, _obj, _event):
         if self._shift_orbiting:
-            self.OnLeftButtonUp()
+            self.EndRotate()
             self._shift_orbiting = False
         else:
             self.OnMiddleButtonUp()
@@ -107,6 +109,20 @@ class RevitInteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         key = str(interactor.GetKeySym() or "").lower()
         if key in {"escape", "esc"} and callable(self._on_clear_selection):
             self._on_clear_selection()
+
+    def _shift_pressed(self, interactor) -> bool:
+        try:
+            if bool(interactor.GetShiftKey()):
+                return True
+        except Exception:
+            pass
+        try:
+            app = QtWidgets.QApplication.instance()
+            if app is not None:
+                return bool(app.keyboardModifiers() & QtCore.Qt.ShiftModifier)
+        except Exception:
+            pass
+        return False
 
     def _interactor_widget(self):
         widget = getattr(self._plotter, "interactor", None)
